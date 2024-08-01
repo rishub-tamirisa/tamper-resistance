@@ -1,0 +1,12 @@
+export HF_TOKEN=<your_token>
+export HF_DATASETS_CACHE=<path_to_cache>
+export HF_HOME=<path_to_home>
+export SAVE_MODELS_DIR=<path_to_save_models>
+export TF_CPP_MIN_LOG_LEVEL=2
+export TxACCEL_CONFIG=<path_to_2_gpu_accel_config>
+export FxACCEL_CONFIG=<path_to_4_gpu_accel_config>
+export ExACCEL_CONFIG=<path_to_8_gpu_accel_config>
+export TOKENIZERS_PARALLELISM=false
+export WANDB__SERVICE_WAIT=300
+export OPENAI_API_KEY=<your_openai_key>
+export USER=<your_username>
