@@ -1,5 +1,7 @@
 # 🛡️ Tamper-Resistant Safeguards for Open-Weight LLMs 🤖
 
+(🛠️ Repo currently WIP 🛠️)
+
 We introduce a novel method, Tampering Attack Resistance (TAR), which is the first defense to withstand a significant number of open-weight fine-tuning attacks on LLMs, while preserving model capabilities.
 
 
