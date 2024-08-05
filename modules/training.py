@@ -9,23 +9,35 @@ from accelerate import Accelerator
 from accelerate.optimizer import AcceleratedOptimizer, move_to_device
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from modules.fsdp_v1_utils import FSDPModelStorage
 from modules.objectives import (
+    log_p_loss,
     dpo_loss_obj,
     obj_max_entropy_next_token,
     obj_model_mse_representations,
     obj_standard_max_next_token,
     random_vector_cosine_obj,
 )
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from tqdm import tqdm
+from transformers import AutoModelForCausalLM
 from modules.utils import (
     delete_optimizer,
     distributed_sample_adversary_lr,
     distributed_sample_task,
     get_next_batch,
     next_n_batches,
+    _filter_inputs,
+    return_coin_flip_batch_selection,
+    return_step_based_batch_selection,
 )
+
+
+#######################################################################
+# BASELINES
+#######################################################################
 
 
 def random_mapping_training_loop(
@@ -103,6 +115,164 @@ def random_mapping_training_loop(
                 pbar.update(1)
                 pbar.set_postfix({"lm_loss": total_lm_loss, "cos_loss": total_cos_loss})
                 wandb.log({"lm_loss": total_lm_loss, "cos_loss": total_cos_loss})
+    return model
+
+
+
+
+#######################################################################
+# RED TEAMING
+#######################################################################
+
+def single_dataloader_accel_finetune_loop(
+    model: torch.nn.Module,
+    tokenizer: AutoTokenizer,
+    retain_dataloader: torch.utils.data.DataLoader,
+    forget_train_dataloader: torch.utils.data.DataLoader,
+    forget_test_dataloader: torch.utils.data.DataLoader,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LambdaLR,
+    accelerator: Accelerator,
+    num_epochs: int,
+    gradient_accumulation_steps: int,
+    max_steps: int = -1,
+    **kwargs,
+):
+    model.config.use_cache = False
+    model.train()
+    model.zero_grad(set_to_none=True)
+
+    total_length = max_steps
+    
+    if kwargs["finetuning_data_type"] == "retain":
+        with_grad_iterator = iter(retain_dataloader)
+        with_no_grad_iterator = iter(forget_train_dataloader)
+        with_grad_dataloader = retain_dataloader
+        with_no_grad_dataloader = forget_train_dataloader
+        wandb_with_grad_label = "finetuning_retain_loss"
+        wandb_with_no_grad_label = "finetuning_training_loss"
+    elif kwargs["finetuning_data_type"] == "forget":
+        with_grad_iterator = iter(forget_train_dataloader)
+        with_no_grad_iterator = iter(retain_dataloader)
+        with_grad_dataloader = forget_train_dataloader
+        with_no_grad_dataloader = retain_dataloader
+        wandb_with_grad_label = "finetuning_training_loss"
+        wandb_with_no_grad_label = "finetuning_retain_loss"
+    else:
+        raise ValueError("Invalid finetune type") 
+    
+    for epoch in range(num_epochs):
+        pbar = tqdm(
+            colour="blue",
+            desc=f"Training Epoch: {epoch+1}",
+            total=total_length,
+            dynamic_ncols=True,
+        )
+        for i in range(max_steps):
+            with_grad_loss = 0
+            with_no_grad_loss = 0
+            for _ in range(gradient_accumulation_steps):
+                accelerator.wait_for_everyone()
+                batch, with_grad_iterator = get_next_batch(with_grad_iterator, with_grad_dataloader)
+                batch_squeezed = {key: value.squeeze() for key, value in batch.items() if key in ["input_ids", "labels", "attention_mask"]}
+                outputs = model(**_filter_inputs(batch_squeezed), output_hidden_states=False)
+                loss = log_p_loss(outputs.logits, batch_squeezed.get("labels"), model.vocab_size) / gradient_accumulation_steps
+                with_grad_loss += loss.item()
+                accelerator.backward(loss)
+                accelerator.wait_for_everyone()
+
+            if accelerator.is_main_process:
+                wandb.log({wandb_with_grad_label: with_grad_loss, wandb_with_no_grad_label: with_no_grad_loss})
+            optimizer.step()
+            optimizer.zero_grad()
+            if(kwargs["scheduler_type"] == "sgdr"):
+                scheduler.step(i)    
+            else:        
+                scheduler.step()
+            model.zero_grad(set_to_none=True)
+            pbar.update(1)
+            pbar.set_postfix({"loss": with_grad_loss})
+    return model
+
+def double_dataloader_accel_finetune_loop(
+    model: torch.nn.Module,
+    tokenizer: AutoTokenizer,
+    retain_dataloader: torch.utils.data.DataLoader,
+    forget_train_dataloader: torch.utils.data.DataLoader,
+    forget_test_dataloader: torch.utils.data.DataLoader,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LambdaLR,
+    accelerator: Accelerator,
+    num_epochs: int,
+    gradient_accumulation_steps: int,
+    max_steps: int = -1,
+    **kwargs,
+):
+    model.config.use_cache = False
+    model.train()
+    model.zero_grad(set_to_none=True)
+
+    total_length = max_steps
+    
+    if kwargs["finetuning_data_type"] == "retain":
+        with_grad_iterator = iter(retain_dataloader)
+        with_no_grad_iterator = iter(forget_train_dataloader)
+        with_grad_dataloader = retain_dataloader
+        with_no_grad_dataloader = forget_train_dataloader
+        wandb_with_grad_label = "finetuning_retain_loss"
+        wandb_with_no_grad_label = "finetuning_training_loss"
+    elif kwargs["finetuning_data_type"] == "forget":
+        with_grad_iterator = iter(forget_train_dataloader)
+        with_no_grad_iterator = iter(retain_dataloader)
+        with_grad_dataloader = forget_train_dataloader
+        with_no_grad_dataloader = retain_dataloader
+        wandb_with_grad_label = "finetuning_training_loss"
+        wandb_with_no_grad_label = "finetuning_retain_loss"
+    else:
+        raise ValueError("Invalid finetune type") 
+
+    test_iterator = iter(forget_test_dataloader)
+    
+    for epoch in range(num_epochs):
+        pbar = tqdm(
+            colour="blue",
+            desc=f"Training Epoch: {epoch+1}",
+            total=total_length,
+            dynamic_ncols=True,
+        )
+        for i in range(max_steps):
+            finetuning_loss = 0
+            next_token_test_loss = 0
+            max_entropy_test_loss = 0
+            for _ in range(gradient_accumulation_steps):
+                accelerator.wait_for_everyone()
+                if kwargs["batch_selection_method"](current_step=i, max_steps=max_steps, prop_steps_for_batch_selection=kwargs["prop_steps_for_batch_selection"]):
+                    batch, with_grad_iterator = get_next_batch(with_grad_iterator, with_grad_dataloader)
+                else:  
+                    batch, with_no_grad_iterator = get_next_batch(with_no_grad_iterator, with_no_grad_dataloader)
+
+                accelerator.wait_for_everyone()
+
+                batch_squeezed = {key: value.squeeze() for key, value in batch.items() if key in ["input_ids", "labels", "attention_mask"]}
+                outputs = model(**_filter_inputs(batch_squeezed), output_hidden_states=False)
+                loss = log_p_loss(outputs.logits, batch_squeezed.get("labels"), model.vocab_size) / gradient_accumulation_steps
+                finetuning_loss += loss.item()
+                accelerator.backward(loss)
+                accelerator.wait_for_everyone()
+
+            if accelerator.is_main_process:
+                wandb.log({"finetuning_training_loss": finetuning_loss})
+
+            optimizer.step()
+            optimizer.zero_grad()
+            if(kwargs["scheduler_type"] == "sgdr"):
+                scheduler.step(i)    
+            else:        
+                scheduler.step()
+            model.zero_grad(set_to_none=True)
+            pbar.update(1)
+            pbar.set_postfix({"loss": finetuning_loss})
+
     return model
 
 
