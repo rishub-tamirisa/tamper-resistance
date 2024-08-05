@@ -18,9 +18,8 @@ from transformers import (
     LlamaForCausalLM,
 )
 
-from dataloader import get_bio_combined_dataloaders, get_chem_combined_dataloaders, get_wmdp_cyber_dataloaders, get_chem_dataloaders, get_cyber_dataloaders #FIXME: Does this still work?
-from training import random_vectors_training_loop, fast_single_dataloader_finetune_loop as repair_loop, log_1_minus_p_training_loop, llmu_training_loop, max_entropy_training_loop #FIXME: Does this still work?
-from utils import update_optim_lr
+from dataloaders import get_bio_multi_dists_dataloaders, get_cyber_dataloaders #FIXME: Ensure import path is correct
+from training import random_vectors_training_loop, llmu_training_loop, max_entropy_training_loop, min_posterior_training_loop #FIXME: Ensure import path is correct
 
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaForCausalLM
 from transformers.models.phi.modeling_phi import PhiDecoderLayer, PhiForCausalLM
@@ -29,7 +28,7 @@ from transformers.models.mistral.modeling_mistral import MistralDecoderLayer, Mi
 from transformers.models.qwen2.modeling_qwen2 import Qwen2DecoderLayer, Qwen2ForCausalLM
 from transformers.models.gemma2.modeling_gemma2 import Gemma2DecoderLayer, Gemma2ForCausalLM
 
-import mmlu_eval.eval as eval #FIXME: Does this still work?
+import ..red_teaming.mmlu_eval.eval as eval #FIXME: Does this still work?
 
 import functools
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
@@ -65,10 +64,9 @@ def fix_seed():
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
 
-def random_mapping(model, base_model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
+def random_mapping(model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
     model = random_vectors_training_loop(
         model, 
-        base_model,
         r_d,
         f_d, 
         optimizer, 
@@ -82,7 +80,7 @@ def random_mapping(model, base_model, r_d, f_d, optimizer, accelerator, num_epoc
 
 
 def min_posterior(model, base_model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
-    model = log_1_minus_p_training_loop(
+    model = min_posterior_training_loop(
         model,
         r_d,
         f_d,
@@ -125,7 +123,7 @@ def baseline(
     model_type: str,
     output_dir: str,
     loop_type=random_mapping,
-    dataloader_type=get_bio_combined_dataloaders,
+    dataloader_type=get_bio_multi_dists_dataloaders,
     args=None,
 ):
     accelerator = Accelerator(
@@ -153,22 +151,23 @@ def baseline(
     tokenizer.pad_token = tokenizer.eos_token
 
     with accelerator.main_process_first():
-        retain, forget_train, forget_test = dataloader_type(tokenizer=tokenizer, accelerator=accelerator, args=args)
-    dataloaders = [retain, forget_train]
+        if dataloader_type == get_bio_multi_dists_dataloaders or dataloader_type == get_cyber_dataloaders:
+            all_dataloaders = dataloader_type(tokenizer=tokenizer, accelerator=accelerator, args=args)
+        else:
+            retain, forget_train, forget_test = dataloader_type(
+                tokenizer=tokenizer, accelerator=accelerator, args=args
+            )
+
+    if dataloader_type == get_bio_multi_dists_dataloaders or dataloader_type == get_cyber_dataloaders:
+        forget_train = all_dataloaders[MULTI_DIST_MAP[args.training_strategy]]
+        dataloaders = [all_dataloaders["pile-retain"], forget_train, all_dataloaders["meta"]]
+    else:
+        dataloaders = [retain, forget_train, forget_test]
 
     accelerator.free_memory()
     model = accelerator.prepare_model(model)
     accelerator.print(f"Model prepared.")
     accelerator.print(f"Output dir: {output_dir}")
-
-    if args.use_rvp_with_mse_retain:
-        accelerator.print("Using RVP with MSE Retain!")
-        base_model = AutoModelForCausalLM.from_pretrained(model_type)
-        base_model = accelerator.prepare_model(base_model)
-        base_model.eval()
-        accelerator.print("Frozen Base Model prepared.")
-    else:
-        base_model = None
 
     optimizer = schedulefree.AdamWScheduleFree(model.parameters(), lr=args.learning_rate, warmup_steps=args.warmup_steps)
 
@@ -180,7 +179,6 @@ def baseline(
 
     model = loop_type(
         model,
-        base_model,
         *dataloaders,
         optimizer,
         accelerator,
@@ -190,7 +188,7 @@ def baseline(
     )
 
     if args.evaluate:
-        accelerator.print("Evaluation mode enabled. WARNING: Model will not be saved.")
+        accelerator.print("Evaluation mode enabled.")
         accelerator.print("Evaluating model.")
         use_eos_token = True if args.model_type == "meta-llama/Meta-Llama-3-8B-Instruct" or args.model_type == "Qwen/Qwen2-7B-Instruct" else False
         user = os.environ.get("USER")
@@ -217,14 +215,23 @@ def baseline(
 
     accelerator.print(f"Model saved to {output_dir}.")
 
+MULTI_DIST_MAP = {
+    "bio_rvp": "bio-combined",
+    "bio_min_posterior": "bio-combined",
+    "bio_max_entropy": "bio-combined",
+    "bio_llmu": "bio-combined",
+
+    "cyber_rvp": "forget_train",
+    "cyber_min_posterior": "forget_train",
+    "cyber_max_entropy": "forget_train",
+    "cyber_llmu": "forget_train",
+}
+
 TRAINING_CONFIG = {
+    #NOTE: The Chemical Security dataset is private.
     "bio_rvp": {
         "loop_type": random_mapping,
-        "dataloader_type": get_bio_combined_dataloaders,
-    },
-    "chem_rvp": {
-        "loop_type": random_mapping,
-        "dataloader_type": get_chem_dataloaders,
+        "dataloader_type": get_bio_multi_dists_dataloaders,
     },
     "cyber_rvp": {
         "loop_type": random_mapping,
@@ -233,11 +240,7 @@ TRAINING_CONFIG = {
 
     "bio_min_posterior": {
         "loop_type": min_posterior,
-        "dataloader_type": get_bio_combined_dataloaders,
-    },
-    "chem_min_posterior": {
-        "loop_type": min_posterior,
-        "dataloader_type": get_chem_dataloaders,
+        "dataloader_type": get_bio_multi_dists_dataloaders,
     },
     "cyber_min_posterior": {
         "loop_type": min_posterior,
@@ -246,11 +249,7 @@ TRAINING_CONFIG = {
 
     "bio_max_entropy": {
         "loop_type": max_entropy,
-        "dataloader_type": get_bio_combined_dataloaders,
-    },
-    "chem_max_entropy": {
-        "loop_type": max_entropy,
-        "dataloader_type": get_chem_dataloaders,
+        "dataloader_type": get_bio_multi_dists_dataloaders,
     },
     "cyber_max_entropy": {
         "loop_type": max_entropy,
@@ -259,11 +258,7 @@ TRAINING_CONFIG = {
 
     "bio_llmu": {
         "loop_type": llmu,
-        "dataloader_type": get_bio_combined_dataloaders,
-    },
-    "chem_llmu": {
-        "loop_type": llmu,
-        "dataloader_type": get_chem_dataloaders,
+        "dataloader_type": get_bio_multi_dists_dataloaders,
     },
     "cyber_llmu": {
         "loop_type": llmu,
@@ -272,11 +267,10 @@ TRAINING_CONFIG = {
 }
 
 def main():
-    #"meta-llama/Meta-Llama-3-8B"
     torch.cuda.empty_cache()
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--model_name", "-mn", type=str, default="meta-llama/Meta-Llama-3-8B-Instruct" #mistralai/Mistral-7B-Instruct-v0.2
+        "--model_name", "-mn", type=str, default="meta-llama/Meta-Llama-3-8B-Instruct" 
     )
     parser.add_argument(
         "--save_model_name", "-smn", type=str, default="max_ent_test"
@@ -290,19 +284,15 @@ def main():
     parser.add_argument("--batch_size", "-bs", type=int, default=8)
 
     parser.add_argument("--num_epochs", "-ne", type=int, default=1)
-    parser.add_argument("--num_impair_steps", "-nis", type=int, default=400)
-    parser.add_argument("--num_repair_steps", "-nrs", type=int, default=600)
+
     parser.add_argument("--warmup_steps", "-ws", type=int, default=100)
     parser.add_argument("--max_steps", "-ms", type=int, default=1000)
     parser.add_argument("--learning_rate", "-lr", type=float, default=1e-5) #5e-6 for good result
-    parser.add_argument("--repair_lr", "-rlr", type=float, default=2e-6)
 
-    parser.add_argument("--use_rvp_with_mse_retain", "-rvp_mse", action="store_true")
 
 
     parser.add_argument("--wandb", "-wb", action="store_true")
     parser.add_argument("--evaluate", "-e", action="store_true")
-    parser.add_argument("--job_config_string", "-jci", type=str, default="test_unlearning_random_mapping")
 
     args = parser.parse_args()
     fix_seed()

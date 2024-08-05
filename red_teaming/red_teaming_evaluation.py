@@ -14,11 +14,12 @@ from transformers import (
     LlamaForCausalLM,
 )
 
-from dataloaders import get_bio_multi_dists_dataloaders, get_cyber_dataloaders #FIXME: Ensure import path is correct
-from training import single_dataloader_accel_finetune_loop, double_dataloader_accel_finetune_loop, return_step_based_batch_selection #FIXME: Ensure import path is correct
-from scheduler import get_exponential_warmup_scheduler, get_sgdr_scheduler, get_no_scheduler, get_linear_warmup_scheduler, get_warmup_with_annealing_scheduler
+from ..modules.dataloaders import get_bio_multi_dists_dataloaders, get_cyber_dataloaders #FIXME: Ensure import path is correct
+from ..modules.training import single_dataloader_accel_finetune_loop, double_dataloader_accel_finetune_loop #FIXME: Ensure import path is correct
+from schedulers import get_exponential_warmup_scheduler, get_sgdr_scheduler, get_no_scheduler, get_linear_warmup_scheduler, get_warmup_with_annealing_scheduler
 from optimizers import get_sgd_with_momentum, get_sgd_with_nesterov_momentum, get_adam, get_adamW, get_adagrad, get_adadelta, get_adamW_schedule_free
 import mmlu_eval.eval as eval
+from ..modules.utils import return_step_based_batch_selection
 
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaForCausalLM
 from transformers.models.phi.modeling_phi import PhiDecoderLayer, PhiForCausalLM
@@ -116,19 +117,14 @@ def sft_red_teaming_evaluation(
         model.print_trainable_parameters()
 
     with accelerator.main_process_first():
-        if dataloader_type == get_bio_multi_dists_dataloaders:
-            all_dataloaders = dataloader_type(tokenizer=tokenizer, accelerator=accelerator, args=args)
-        elif dataloader_type == get_cyber_dataloaders:
+        if dataloader_type == get_bio_multi_dists_dataloaders or dataloader_type == get_cyber_dataloaders:
             all_dataloaders = dataloader_type(tokenizer=tokenizer, accelerator=accelerator, args=args)
         else:
             retain, forget_train, forget_test = dataloader_type(
                 tokenizer=tokenizer, accelerator=accelerator, args=args
             )
 
-    if dataloader_type == get_bio_multi_dists_dataloaders:
-        forget_train = all_dataloaders[MULTI_DIST_MAP[args.training_strategy]]
-        dataloaders = [all_dataloaders["pile-retain"], forget_train, all_dataloaders["meta"]]
-    elif dataloader_type == get_cyber_dataloaders:
+    if dataloader_type == get_bio_multi_dists_dataloaders or dataloader_type == get_cyber_dataloaders:
         forget_train = all_dataloaders[MULTI_DIST_MAP[args.training_strategy]]
         dataloaders = [all_dataloaders["pile-retain"], forget_train, all_dataloaders["meta"]]
     else:

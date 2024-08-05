@@ -19,6 +19,8 @@ from modules.objectives import (
     obj_model_mse_representations,
     obj_standard_max_next_token,
     random_vector_cosine_obj,
+    obj_mismatch_next_token,
+    obj_max_adv_posterior,
 )
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from tqdm import tqdm
@@ -117,6 +119,177 @@ def random_mapping_training_loop(
                 wandb.log({"lm_loss": total_lm_loss, "cos_loss": total_cos_loss})
     return model
 
+
+def min_posterior_training_loop(
+    model: torch.nn.Module,
+    retain_dataloader: torch.utils.data.DataLoader,
+    forget_dataloader: torch.utils.data.DataLoader,
+    optimizer: AcceleratedOptimizer,
+    accelerator: Accelerator,
+    num_epochs: int,
+    gradient_accumulation_steps: int,
+    max_steps: int = -1,
+    **kwargs,
+):
+    model.config.use_cache = False
+    model.train()
+    model.zero_grad(set_to_none=True)
+    retain_iterator = iter(retain_dataloader)
+    forget_iterator = iter(forget_dataloader)
+    total_length = max_steps
+    for epoch in range(num_epochs):
+        if accelerator.is_main_process:
+            pbar = tqdm(
+                colour="blue",
+                desc=f"Training Epoch: {epoch+1}",
+                total=total_length,
+                dynamic_ncols=True,
+            )
+        for _ in range(total_length):
+            total_loss = 0
+            for _ in range(gradient_accumulation_steps):
+                retain_batch, retain_iterator = get_next_batch(
+                    retain_iterator, retain_dataloader
+                )
+
+                retain_loss = obj_max_adv_posterior(model, retain_batch, accelerator, adv_loss="min_posterior")
+                retain_loss = retain_loss / gradient_accumulation_steps
+                accelerator.backward(retain_loss)
+
+                forget_batch, forget_iterator = get_next_batch(
+                    forget_iterator, forget_dataloader
+                )
+                forget_loss = obj_max_adv_posterior(model, forget_batch, accelerator, adv_loss="min_posterior")
+                forget_loss = forget_loss / gradient_accumulation_steps
+                accelerator.backward(forget_loss)
+                total_loss += retain_loss.item() + forget_loss.item()
+
+            optimizer.step()
+            model.zero_grad(set_to_none=True)
+            if accelerator.is_main_process:
+                pbar.update(1)
+                pbar.set_postfix({"loss": total_loss})
+                wandb.log({"loss": total_loss})
+    return model
+
+def max_entropy_training_loop(
+    model: torch.nn.Module,
+    retain_dataloader: torch.utils.data.DataLoader,
+    forget_dataloader: torch.utils.data.DataLoader,
+    optimizer: AcceleratedOptimizer,
+    accelerator: Accelerator,
+    num_epochs: int,
+    gradient_accumulation_steps: int,
+    max_steps: int = -1,
+    **kwargs,
+):
+    model.config.use_cache = False
+    model.train()
+    model.zero_grad(set_to_none=True)
+    retain_iterator = iter(retain_dataloader)
+    forget_iterator = iter(forget_dataloader)
+    total_length = max_steps
+    for epoch in range(num_epochs):
+        if accelerator.is_main_process:
+            pbar = tqdm(
+                colour="blue",
+                desc=f"Training Epoch: {epoch+1}",
+                total=total_length,
+                dynamic_ncols=True,
+            )
+        for _ in range(total_length):
+            total_loss = 0
+            for _ in range(gradient_accumulation_steps):
+                retain_batch, retain_iterator = get_next_batch(
+                    retain_iterator, retain_dataloader
+                )
+                retain_loss = obj_max_adv_posterior(model, retain_batch, accelerator, adv_loss="max_entropy")
+                retain_loss = retain_loss / gradient_accumulation_steps
+                accelerator.backward(retain_loss)
+
+                forget_batch, forget_iterator = get_next_batch(
+                    forget_iterator, forget_dataloader
+                )
+                forget_loss = obj_max_adv_posterior(model, forget_batch, accelerator, adv_loss="max_entropy")
+                forget_loss = forget_loss / gradient_accumulation_steps
+                accelerator.backward(forget_loss)
+                total_loss += retain_loss.item() + forget_loss.item()
+
+            optimizer.step()
+            model.zero_grad(set_to_none=True)
+            if accelerator.is_main_process:
+                pbar.update(1)
+                pbar.set_postfix({"loss": total_loss})
+                wandb.log({"loss": total_loss})
+    return model
+
+def llmu_training_loop(
+    model: torch.nn.Module,
+    retain_dataloader: torch.utils.data.DataLoader,
+    forget_dataloader: torch.utils.data.DataLoader,
+    optimizer: AcceleratedOptimizer,
+    accelerator: Accelerator,
+    num_epochs: int,
+    gradient_accumulation_steps: int,
+    max_steps: int = -1,
+    **kwargs,
+):
+    model.config.use_cache = False
+    model.train()
+    model.zero_grad(set_to_none=True)
+    retain_iterator = iter(retain_dataloader)
+    forget_iterator = iter(forget_dataloader)
+    total_length = max_steps
+    for epoch in range(num_epochs):
+        if accelerator.is_main_process:
+            pbar = tqdm(
+                colour="blue",
+                desc=f"Training Epoch: {epoch+1}",
+                total=total_length,
+                dynamic_ncols=True,
+            )
+        for _ in range(total_length):
+            total_loss = 0
+            for _ in range(gradient_accumulation_steps):
+                retain_batch, retain_iterator = get_next_batch(
+                    retain_iterator, retain_dataloader
+                )
+                retain_loss = obj_standard_max_next_token(
+                    model, retain_batch
+                )  # instead of KL with frozen base
+                retain_loss = retain_loss / gradient_accumulation_steps
+                accelerator.backward(retain_loss)
+
+                forget_batch, forget_iterator = get_next_batch(
+                    forget_iterator, forget_dataloader
+                )
+                forget_loss = (
+                    obj_standard_max_next_token(model, forget_batch) * -1
+                )  # gradient ascent
+                forget_loss = forget_loss / gradient_accumulation_steps
+
+                accelerator.backward(forget_loss)
+
+                mismatch_batch, retain_iterator = get_next_batch(
+                    retain_iterator, retain_dataloader
+                )
+                mismatch_loss = obj_mismatch_next_token(
+                    model, forget_batch, mismatch_batch
+                )  # mismatch forget set
+                mismatch_loss = mismatch_loss / gradient_accumulation_steps
+                accelerator.backward(mismatch_loss)
+
+                total_loss += (
+                    retain_loss.item() + forget_loss.item() + mismatch_loss.item()
+                )
+
+            optimizer.step()
+            model.zero_grad(set_to_none=True)
+            if accelerator.is_main_process:
+                pbar.update(1)
+                pbar.set_postfix({"loss": total_loss})
+                wandb.log({"loss": total_loss})
+    return model
 
 
 
@@ -230,8 +403,6 @@ def double_dataloader_accel_finetune_loop(
         wandb_with_no_grad_label = "finetuning_retain_loss"
     else:
         raise ValueError("Invalid finetune type") 
-
-    test_iterator = iter(forget_test_dataloader)
     
     for epoch in range(num_epochs):
         pbar = tqdm(
@@ -242,8 +413,6 @@ def double_dataloader_accel_finetune_loop(
         )
         for i in range(max_steps):
             finetuning_loss = 0
-            next_token_test_loss = 0
-            max_entropy_test_loss = 0
             for _ in range(gradient_accumulation_steps):
                 accelerator.wait_for_everyone()
                 if kwargs["batch_selection_method"](current_step=i, max_steps=max_steps, prop_steps_for_batch_selection=kwargs["prop_steps_for_batch_selection"]):
@@ -274,6 +443,11 @@ def double_dataloader_accel_finetune_loop(
             pbar.set_postfix({"loss": finetuning_loss})
 
     return model
+
+
+#######################################################################
+# TAMPER RESISTANCE
+#######################################################################
 
 
 def adversary_next_token_obj_step(
