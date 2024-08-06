@@ -178,35 +178,6 @@ def _filter_inputs(inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if k in ["input_ids", "attention_mask", "labels"]
     }
 
-#### Clean up the code below ####
-ADV_LOSS_FUNCS = {
-    "max_entropy": max_entropy_loss,
-    "min_posterior": log_1_minus_p_loss,
-}
-
-def obj_max_adv_posterior(
-    model, inputs, accelerator, return_outputs=False, adv_loss="min_posterior"
-):
-    concept_label = inputs.get("concept_label")
-    labels = inputs.get("labels")
-    _inputs = {
-        k: v for k, v in inputs.items() if k != "concept_label" and k != "labels"
-    }
-
-    outputs = model(**_inputs, output_hidden_states=False)
-    logits = outputs.logits
-    activations = outputs.hidden_states
-    vocab_size = model.vocab_size
-    adv_loss_func = ADV_LOSS_FUNCS[adv_loss]
-    loss = 0
-    for i in range(len(logits)):
-        if concept_label[i]:
-            loss += adv_loss_func(logits[i], labels[i], vocab_size)
-        else:
-            loss += log_p_loss(logits[i], labels[i], vocab_size)
-
-    return loss / len(logits)
-
 
 def obj_standard_max_next_token(
     model: torch.nn.Module,

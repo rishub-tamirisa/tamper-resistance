@@ -159,7 +159,7 @@ def baseline(
             )
 
     if dataloader_type == get_bio_multi_dists_dataloaders or dataloader_type == get_cyber_dataloaders:
-        forget_train = all_dataloaders[MULTI_DIST_MAP[args.training_strategy]]
+        forget_train = all_dataloaders[DATALOADER_MAP[args.dataloader_type]["forget_train_split_key"]]
         dataloaders = [all_dataloaders["pile-retain"], forget_train, all_dataloaders["meta"]]
     else:
         dataloaders = [retain, forget_train, forget_test]
@@ -215,56 +215,74 @@ def baseline(
 
     accelerator.print(f"Model saved to {output_dir}.")
 
-MULTI_DIST_MAP = {
-    "bio_rvp": "bio-combined",
-    "bio_min_posterior": "bio-combined",
-    "bio_max_entropy": "bio-combined",
-    "bio_llmu": "bio-combined",
+# MULTI_DIST_MAP = {
+#     "bio_rvp": "bio-combined",
+#     "bio_min_posterior": "bio-combined",
+#     "bio_max_entropy": "bio-combined",
+#     "bio_llmu": "bio-combined",
 
-    "cyber_rvp": "forget_train",
-    "cyber_min_posterior": "forget_train",
-    "cyber_max_entropy": "forget_train",
-    "cyber_llmu": "forget_train",
+#     "cyber_rvp": "forget_train",
+#     "cyber_min_posterior": "forget_train",
+#     "cyber_max_entropy": "forget_train",
+#     "cyber_llmu": "forget_train",
+# }
+
+DATALOADER_MAP = {
+    "bio": {
+        "dataloader_name": get_bio_multi_dists_dataloaders,
+        "forget_train_split_key": "bio-combined",
+    },
+    "cyber": {
+        "dataloader_name" : get_cyber_dataloaders,
+        "forget_train_split_key": "forget_train",
+    }
 }
 
-TRAINING_CONFIG = {
-    #NOTE: The Chemical Security dataset is private.
-    "bio_rvp": {
-        "loop_type": random_mapping,
-        "dataloader_type": get_bio_multi_dists_dataloaders,
-    },
-    "cyber_rvp": {
-        "loop_type": random_mapping,
-        "dataloader_type": get_cyber_dataloaders,
-    },
-
-    "bio_min_posterior": {
-        "loop_type": min_posterior,
-        "dataloader_type": get_bio_multi_dists_dataloaders,
-    },
-    "cyber_min_posterior": {
-        "loop_type": min_posterior,
-        "dataloader_type": get_cyber_dataloaders,
-    },
-
-    "bio_max_entropy": {
-        "loop_type": max_entropy,
-        "dataloader_type": get_bio_multi_dists_dataloaders,
-    },
-    "cyber_max_entropy": {
-        "loop_type": max_entropy,
-        "dataloader_type": get_cyber_dataloaders,
-    },
-
-    "bio_llmu": {
-        "loop_type": llmu,
-        "dataloader_type": get_bio_multi_dists_dataloaders,
-    },
-    "cyber_llmu": {
-        "loop_type": llmu,
-        "dataloader_type": get_cyber_dataloaders,
-    },
+BASELINE_MAP = {
+    "random_mapping": random_mapping,
+    "min_posterior": min_posterior,
+    "max_entropy": max_entropy,
+    "llmu": llmu,
 }
+
+# TRAINING_CONFIG = {
+#     #NOTE: The Chemical Security dataset is private.
+#     "bio_random_mapping": {
+#         "loop_type": random_mapping,
+#         "dataloader_type": get_bio_multi_dists_dataloaders,
+#     },
+#     "cyber_random_mapping": {
+#         "loop_type": random_mapping,
+#         "dataloader_type": get_cyber_dataloaders,
+#     },
+
+#     "bio_min_posterior": {
+#         "loop_type": min_posterior,
+#         "dataloader_type": get_bio_multi_dists_dataloaders,
+#     },
+#     "cyber_min_posterior": {
+#         "loop_type": min_posterior,
+#         "dataloader_type": get_cyber_dataloaders,
+#     },
+
+#     "bio_max_entropy": {
+#         "loop_type": max_entropy,
+#         "dataloader_type": get_bio_multi_dists_dataloaders,
+#     },
+#     "cyber_max_entropy": {
+#         "loop_type": max_entropy,
+#         "dataloader_type": get_cyber_dataloaders,
+#     },
+
+#     "bio_llmu": {
+#         "loop_type": llmu,
+#         "dataloader_type": get_bio_multi_dists_dataloaders,
+#     },
+#     "cyber_llmu": {
+#         "loop_type": llmu,
+#         "dataloader_type": get_cyber_dataloaders,
+#     },
+# }
 
 def main():
     torch.cuda.empty_cache()
@@ -279,7 +297,8 @@ def main():
         "--model_type", "-mt", type=str, default="meta-llama/Meta-Llama-3-8B-Instruct"
     )
 
-    parser.add_argument("--training_config", "-s", type=str, default="bio_min_posterior")
+    parser.add_argument("--baseline_type", "-bt", type=str, default="random_mapping")
+    parser.add_argument("--dataloader_type", "-dt", type=str, default="bio")
 
     parser.add_argument("--batch_size", "-bs", type=int, default=8)
 
@@ -306,8 +325,8 @@ def main():
         model_name=args.model_name,
         model_type=args.model_type,
         output_dir=os.path.join(SAVE_MODELS_DIR, args.save_model_name),
-        loop_type=TRAINING_CONFIG[args.training_config]["loop_type"],
-        dataloader_type=TRAINING_CONFIG[args.training_config]["dataloader_type"],
+        loop_type=BASELINE_MAP[args.baseline_type],
+        dataloader_type=DATALOADER_MAP[args.dataloader_type]["dataloader_name"],
         args=args,
     )
 

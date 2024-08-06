@@ -15,12 +15,13 @@ from modules.fsdp_v1_utils import FSDPModelStorage
 from modules.objectives import (
     log_p_loss,
     dpo_loss_obj,
-    obj_max_entropy_next_token,
     obj_model_mse_representations,
     obj_standard_max_next_token,
     random_vector_cosine_obj,
     obj_mismatch_next_token,
     obj_max_adv_posterior,
+    max_entropy_loss,
+    log_1_minus_p_loss,
 )
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from tqdm import tqdm
@@ -152,18 +153,17 @@ def min_posterior_training_loop(
                     retain_iterator, retain_dataloader
                 )
 
-                retain_loss = obj_max_adv_posterior(model, retain_batch, accelerator, adv_loss="min_posterior")
-                retain_loss = retain_loss / gradient_accumulation_steps
+                batch_squeezed = {key: value.squeeze() for key, value in retain_batch.items() if key in ["input_ids", "labels", "attention_mask"]}
+                outputs = model(**_filter_inputs(batch_squeezed), output_hidden_states=False)
+                retain_loss = log_p_loss(outputs.logits, batch_squeezed.get("labels"), model.vocab_size) / gradient_accumulation_steps
                 accelerator.backward(retain_loss)
 
                 forget_batch, forget_iterator = get_next_batch(
                     forget_iterator, forget_dataloader
                 )
-                forget_loss = obj_max_adv_posterior(model, forget_batch, accelerator, adv_loss="min_posterior")
-                forget_loss = forget_loss / gradient_accumulation_steps
+                forget_loss = log_1_minus_p_loss(outputs.logits, batch_squeezed.get("labels"), model.vocab_size) / gradient_accumulation_steps
                 accelerator.backward(forget_loss)
                 total_loss += retain_loss.item() + forget_loss.item()
-
             optimizer.step()
             model.zero_grad(set_to_none=True)
             if accelerator.is_main_process:
@@ -203,15 +203,17 @@ def max_entropy_training_loop(
                 retain_batch, retain_iterator = get_next_batch(
                     retain_iterator, retain_dataloader
                 )
-                retain_loss = obj_max_adv_posterior(model, retain_batch, accelerator, adv_loss="max_entropy")
-                retain_loss = retain_loss / gradient_accumulation_steps
+                batch_squeezed = {key: value.squeeze() for key, value in retain_batch.items() if key in ["input_ids", "labels", "attention_mask"]}
+                outputs = model(**_filter_inputs(batch_squeezed), output_hidden_states=False)
+                retain_loss = log_p_loss(outputs.logits, batch_squeezed.get("labels"), model.vocab_size) / gradient_accumulation_steps
                 accelerator.backward(retain_loss)
 
                 forget_batch, forget_iterator = get_next_batch(
                     forget_iterator, forget_dataloader
                 )
-                forget_loss = obj_max_adv_posterior(model, forget_batch, accelerator, adv_loss="max_entropy")
-                forget_loss = forget_loss / gradient_accumulation_steps
+                batch_squeezed = {key: value.squeeze() for key, value in retain_batch.items() if key in ["input_ids", "labels", "attention_mask"]}
+                outputs = model(**_filter_inputs(batch_squeezed), output_hidden_states=False)
+                forget_loss = max_entropy_loss(outputs.logits, batch_squeezed.get("labels"), model.vocab_size) / gradient_accumulation_steps
                 accelerator.backward(forget_loss)
                 total_loss += retain_loss.item() + forget_loss.item()
 
@@ -256,7 +258,7 @@ def llmu_training_loop(
                 )
                 retain_loss = obj_standard_max_next_token(
                     model, retain_batch
-                )  # instead of KL with frozen base
+                ) 
                 retain_loss = retain_loss / gradient_accumulation_steps
                 accelerator.backward(retain_loss)
 
@@ -265,7 +267,7 @@ def llmu_training_loop(
                 )
                 forget_loss = (
                     obj_standard_max_next_token(model, forget_batch) * -1
-                )  # gradient ascent
+                )
                 forget_loss = forget_loss / gradient_accumulation_steps
 
                 accelerator.backward(forget_loss)
@@ -275,7 +277,7 @@ def llmu_training_loop(
                 )
                 mismatch_loss = obj_mismatch_next_token(
                     model, forget_batch, mismatch_batch
-                )  # mismatch forget set
+                )
                 mismatch_loss = mismatch_loss / gradient_accumulation_steps
                 accelerator.backward(mismatch_loss)
 
