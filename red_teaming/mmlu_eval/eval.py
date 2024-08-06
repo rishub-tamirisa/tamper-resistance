@@ -21,6 +21,8 @@ import functools
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 from torch.distributed import get_world_size, get_rank, all_gather, all_gather_into_tensor
 
+# The following is a distributed implementation inspired by https://github.com/ollmer/mmlu/blob/master/evaluate_hf.py
+
 ALLOWED_MODULES = [
     LlamaDecoderLayer,
     PhiDecoderLayer,
