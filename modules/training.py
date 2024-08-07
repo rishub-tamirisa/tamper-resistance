@@ -123,8 +123,7 @@ def random_mapping_training_loop(
 
 def min_posterior_training_loop(
     model: torch.nn.Module,
-    retain_dataloader: torch.utils.data.DataLoader,
-    forget_dataloader: torch.utils.data.DataLoader,
+    dataloaders: dict[str, torch.utils.data.DataLoader],
     optimizer: AcceleratedOptimizer,
     accelerator: Accelerator,
     num_epochs: int,
@@ -135,8 +134,14 @@ def min_posterior_training_loop(
     model.config.use_cache = False
     model.train()
     model.zero_grad(set_to_none=True)
-    retain_iterator = iter(retain_dataloader)
-    forget_iterator = iter(forget_dataloader)
+    retain_iterator, retain_dataloader = (
+        iter(dataloaders["retain"]),
+        dataloaders["retain"],
+    )
+    forget_iterator, forget_dataloader = (
+        iter(dataloaders["forget_train"]),
+        dataloaders["forget_train"],
+    )
     total_length = max_steps
     for epoch in range(num_epochs):
         if accelerator.is_main_process:
@@ -174,8 +179,7 @@ def min_posterior_training_loop(
 
 def max_entropy_training_loop(
     model: torch.nn.Module,
-    retain_dataloader: torch.utils.data.DataLoader,
-    forget_dataloader: torch.utils.data.DataLoader,
+    dataloaders: dict[str, torch.utils.data.DataLoader],
     optimizer: AcceleratedOptimizer,
     accelerator: Accelerator,
     num_epochs: int,
@@ -186,8 +190,14 @@ def max_entropy_training_loop(
     model.config.use_cache = False
     model.train()
     model.zero_grad(set_to_none=True)
-    retain_iterator = iter(retain_dataloader)
-    forget_iterator = iter(forget_dataloader)
+    retain_iterator, retain_dataloader = (
+        iter(dataloaders["retain"]),
+        dataloaders["retain"],
+    )
+    forget_iterator, forget_dataloader = (
+        iter(dataloaders["forget_train"]),
+        dataloaders["forget_train"],
+    )
     total_length = max_steps
     for epoch in range(num_epochs):
         if accelerator.is_main_process:
@@ -227,8 +237,7 @@ def max_entropy_training_loop(
 
 def llmu_training_loop(
     model: torch.nn.Module,
-    retain_dataloader: torch.utils.data.DataLoader,
-    forget_dataloader: torch.utils.data.DataLoader,
+    dataloaders: dict[str, torch.utils.data.DataLoader],
     optimizer: AcceleratedOptimizer,
     accelerator: Accelerator,
     num_epochs: int,
@@ -239,8 +248,14 @@ def llmu_training_loop(
     model.config.use_cache = False
     model.train()
     model.zero_grad(set_to_none=True)
-    retain_iterator = iter(retain_dataloader)
-    forget_iterator = iter(forget_dataloader)
+    retain_iterator, retain_dataloader = (
+        iter(dataloaders["retain"]),
+        dataloaders["retain"],
+    )
+    forget_iterator, forget_dataloader = (
+        iter(dataloaders["forget_train"]),
+        dataloaders["forget_train"],
+    )
     total_length = max_steps
     for epoch in range(num_epochs):
         if accelerator.is_main_process:
