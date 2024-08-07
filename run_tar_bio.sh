@@ -21,7 +21,7 @@ accelerate launch --config_file $ExACCEL_CONFIG tar.py \
 --inner_optimizer_warmup_steps 20 \
 --tar_inner_loop_subsample 4 \
 --tar_adversary_batch_size 4 \
---base_model_name Llama-3-8B-Instruct-Random-Mapped-Bio \
+--base_model_name lapisrocks/Llama-3-8B-Instruct-Random-Mapped-Bio \
 --subject bio \
 --base llama3 \
 --new_model_name Llama-3-8B-Instruct-TAR-Bio
