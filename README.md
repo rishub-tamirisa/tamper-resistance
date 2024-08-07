@@ -7,16 +7,16 @@ We introduce a novel method, Tampering Attack Resistance (TAR), which is the fir
 
 ## Table of Contents
 
-- [📰 Latest News 📰](#Latest-News)
-- [🛡️ What are Tamper-Resistant Safeguards? 🛡️](#What-are-Tamper-Resistant-Safeguards)
-- [🌐 Overview 🌐](#Overview)
-- [☕ Quick Start ☕](#Quick-Start)
-  - [⚙️ Installation](#Installation)
-  - [🛠️ Running Tamper-Resistance Training](#Running-Tamper-Resistance-Training)
-  - [➕ Running the Red-teaming evaluation](#Red-teaming-evaluation)
-- [📁 Directory Structure](#Directory-Structure)
-- [🤗 Models and Datasets](#Models-and-Datasets)
-- [🙏 Citation 🙏](#Citation)
+- [📰 Latest News 📰](#-latest-news-)
+- [🛡️ What are Tamper-Resistant Safeguards? 🛡️](#️-what-are-tamper-resistant-safeguards-️)
+- [🌐 Overview 🌐](#-overview-)
+- [☕ Quick Start ☕](#-quick-start-)
+  - [📦 Setup](#-setup)
+  - [🛠️ Running Tamper-Resistance Training](#️-running-tamper-resistance-training)
+  - [➕ Running the Red-teaming evaluation](#-running-the-red-teaming-evaluation)
+- [📁 Directory Structure](#-directory-structure)
+- [🤗 Models and Datasets](#-models-and-datasets)
+- [🙏 Citation 🙏](#citation)
 
 ## 📰 Latest News 📰
 
