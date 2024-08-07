@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, Tuple, Union
+
 import torch
 import torch.nn.functional as F
 from accelerate import Accelerator
@@ -266,7 +267,7 @@ def obj_max_entropy_next_token(
     outputs = model(**_inputs, output_hidden_states=False)
     logits = outputs.logits
     vocab_size = model.vocab_size
-    me_loss = max_entropy_loss(logits, labels, vocab_size)
+    me_loss = max_entropy_loss(logits)
     diagnostic_loss = log_p_loss(logits, labels, vocab_size)
     return me_loss, diagnostic_loss.item()
 

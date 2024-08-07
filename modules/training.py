@@ -7,18 +7,19 @@ import torch.distributed as dist
 import wandb
 from accelerate import Accelerator
 from accelerate.optimizer import AcceleratedOptimizer, move_to_device
-from fsdp_v1_utils import FSDPModelStorage
-from objectives import (
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from tqdm import tqdm
+from transformers import AutoModelForCausalLM
+
+from modules.fsdp_v1_utils import FSDPModelStorage
+from modules.objectives import (
     dpo_loss_obj,
     obj_max_entropy_next_token,
     obj_model_mse_representations,
     obj_standard_max_next_token,
     random_vector_cosine_obj,
 )
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from tqdm import tqdm
-from transformers import AutoModelForCausalLM
-from utils import (
+from modules.utils import (
     delete_optimizer,
     distributed_sample_adversary_lr,
     distributed_sample_task,
@@ -27,7 +28,7 @@ from utils import (
 )
 
 
-def random_vectors_training_loop(
+def random_mapping_training_loop(
     model: Union[AutoModelForCausalLM, FSDP],
     dataloaders: dict[str, torch.utils.data.DataLoader],
     optimizer: AcceleratedOptimizer,
@@ -143,18 +144,17 @@ def adversary_next_token_obj_step(
 
 def tamper_resistance_obj(
     batches: list,
-    dpo_pref_batches: list,
     model: torch.nn.Module,
     gradient_accumulation_steps: int,
     accelerator: Accelerator,
     scale: float = 0.5,
-    tamper_resistance_loss_type: str = "ascent_grad",
+    tamper_resistance_loss_type: str = "max_entropy",
 ):
     """
     Compute the tamper resistance objective loss.
 
     This function calculates the loss for the tamper resistance objective,
-    which can be either max entropy or DPO (Direct Preference Optimization) based.
+    which can be either max entropy or DPO (Direct Preference Optimization) based. It also includes a diagnostic loss for evaluating the next-token loss on the tamper-resistance held-out batch x_tr.
 
     Args:
         batches (list): List of input batches for max entropy calculation.
@@ -164,14 +164,13 @@ def tamper_resistance_obj(
         accelerator (Accelerator): The Hugging Face Accelerator object.
         scale (float, optional): Scaling factor for the loss. Defaults to 0.5.
         tamper_resistance_loss_type (str, optional): Type of tamper resistance loss to use.
-            Can be "max_entropy" or "dpo". Defaults to "ascent_grad".
+            Can be "max_entropy" or "dpo". Defaults to "max_entropy".
 
     Returns:
         float: The total accumulated loss.
     """
     total_loss = 0
     total_diagnostic_loss = 0
-    total_retain_loss = 0
     for i in range(gradient_accumulation_steps):
         diagnostic_loss = None
         loss = None
@@ -184,13 +183,15 @@ def tamper_resistance_obj(
             diagnostic_name = "reward_accs"
             loss, reward_accs = dpo_loss_obj(
                 policy_model=model,
-                batch=dpo_pref_batches[i],
+                batch=batches[i],
                 accelerator=accelerator,
                 scale=scale,
                 gradient_accumulation_steps=gradient_accumulation_steps,
+                backprop=True,
             )
             total_loss += loss
             total_diagnostic_loss += reward_accs
+            continue  # backprop done in function
 
         loss = loss / (gradient_accumulation_steps)
         accelerator.backward(loss)
@@ -199,8 +200,8 @@ def tamper_resistance_obj(
     if accelerator.is_main_process:
         wandb.log(
             {
-                f"meta_{tamper_resistance_loss_type}_loss": total_loss / scale,
-                f"meta_{diagnostic_name}_loss": total_diagnostic_loss,
+                f"tr_{tamper_resistance_loss_type}_loss": total_loss / scale,
+                f"tr_{diagnostic_name}_loss": total_diagnostic_loss,
             }
         )
     return total_loss
@@ -210,7 +211,6 @@ def inner_loop_step(
     model: Union[AutoModelForCausalLM, FSDP],
     adversary_batches: List[torch.Tensor],
     meta_forget_batches: List[torch.Tensor],
-    dpo_pref_batches: List[torch.Tensor],
     inner_optimizer: AcceleratedOptimizer,
     inner_scheduler: torch.optim.lr_scheduler.LRScheduler,
     accelerator: Accelerator,
@@ -218,7 +218,7 @@ def inner_loop_step(
     meta_grad_scale: float = 0.25,
     model_storage: FSDPModelStorage = None,
     sub_pbar: tqdm = None,
-    tamper_resistance_loss_type: str = "ascent_grad",
+    tamper_resistance_loss_type: str = "max_entropy",
     compute_tamper_resistance_grad: bool = True,
 ) -> float:
     """
@@ -245,6 +245,8 @@ def inner_loop_step(
     Returns:
         float: The computed tamper resistance loss.
     """
+
+    # Adversary next-token objective step
     adversary_next_token_obj_step(
         model=model,
         adversary_batches=adversary_batches,
@@ -256,23 +258,28 @@ def inner_loop_step(
     if inner_scheduler:
         inner_scheduler.step()
     model.zero_grad(set_to_none=True)
+
+    # Compute tamper-resistance loss
     tamper_resistance_loss = 0
     if compute_tamper_resistance_grad:
         tamper_resistance_loss = tamper_resistance_obj(
             batches=meta_forget_batches,
-            dpo_pref_batches=dpo_pref_batches,
             model=model,
             gradient_accumulation_steps=gradient_accumulation_steps,
             accelerator=accelerator,
             scale=meta_grad_scale,
             tamper_resistance_loss_type=tamper_resistance_loss_type,
         )
+
+        # Accumulate sharded TR loss grads in FSDPModelStorage data structure
+        # This is done so everything is computed in place
         model_storage.collect_param_or_grad(
             model=model,
             accelerator=accelerator,
             to_cpu=False,
             mode="grads",
         )
+        # Clear grads from model to be ready for next adversary step
         model.zero_grad(set_to_none=False)
     return tamper_resistance_loss
 
@@ -295,6 +302,21 @@ def schedule(i: int = None, K: int = None, schedule_lambda: float = 0.5):
     return torch.exp(schedule_lambda * (torch.tensor(i) - (K - 1))).item()
 
 
+def _sample_switching_point(
+    switching_point_coeffs: str, tar_inner_loop_steps: int
+) -> int:
+    coeffs = {
+        k: float(v)
+        for k, v in [item.split(":") for item in switching_point_coeffs.split(",")]
+    }
+    M = int(
+        torch.distributions.Beta(coeffs["alpha"], coeffs["beta"]).sample()
+        * tar_inner_loop_steps
+    )
+    M = accelerate.utils.broadcast_object_list([M], 0)[0]
+    return M
+
+
 def tar_training_loop(
     model: Union[AutoModelForCausalLM, FSDP],
     dataloaders: dict[str, torch.utils.data.DataLoader],
@@ -303,8 +325,8 @@ def tar_training_loop(
     gradient_accumulation_steps: int = 2,
     max_steps: int = 1000,
     tar_inner_loop_steps: int = 4,
-    tar_tamper_resistance_loss_lower_bound: float = -15.0,
-    tar_meta_grad_scale: float = 0.25,
+    tar_tamper_resistance_loss_lower_bound: float = -11.76,
+    tar_tamper_resistance_grad_scale: float = 4.0,
     tar_tamper_resistance_loss_type: str = "max_entropy",
     schedule_lambda: float = 0.5,
     inner_optimizer_warmup_steps: float = 20,
@@ -315,7 +337,6 @@ def tar_training_loop(
     tar_num_tasks_sampled: int = 3,
     adversary_lr_samples: str = "2e-5,4e-5,1e-4",
     tar_inner_loop_subsample: int = 1,
-    tar_random_subsample: bool = False,
     tar_retain_scale: float = 1.0,
     retain_representations: bool = False,
     switching_point_coeffs: str = "alpha:6.0,beta:3.0",
@@ -337,7 +358,7 @@ def tar_training_loop(
         max_steps (int, optional): Maximum number of training steps. Defaults to 1000.
         tar_inner_loop_steps (int, optional): Number of steps in the inner loop. Defaults to 4.
         tar_tamper_resistance_loss_lower_bound (float, optional): Lower bound for the tamper resistance loss. Defaults to -15.0.
-        tar_meta_grad_scale (float, optional): Scaling factor for meta-gradients. Defaults to 0.25.
+        tar_tamper_resistance_grad_scale (float, optional): Scaling factor for meta-gradients. Defaults to 0.25.
         tar_tamper_resistance_loss_type (str, optional): Type of tamper resistance loss. Defaults to "max_entropy".
         schedule_lambda (float, optional): Lambda parameter for the schedule function. Defaults to 0.5.
         inner_optimizer_warmup_steps (float, optional): Warmup steps for the inner optimizer. Defaults to 20.
@@ -361,6 +382,7 @@ def tar_training_loop(
     model.config.use_cache = False
     model.train()
 
+    # Retain and heldout forget dataloaders use `retain` and `meta` keys from dataloader funcs
     retain_iterator, retain_dataloader = (
         iter(dataloaders["retain"]),
         dataloaders["retain"],
@@ -370,6 +392,7 @@ def tar_training_loop(
         dataloaders["meta"],
     )
 
+    # Adversary dataloaders use the remaining keys
     adversary_dataloaders = {
         key: {"iter": iter(value), "dataloader": value}
         for key, value in dataloaders.items()
@@ -388,6 +411,7 @@ def tar_training_loop(
     model_storage = FSDPModelStorage()
     adversary_lr_samples = [float(lr) for lr in adversary_lr_samples.split(",")]
 
+    # Setup model for representation-engineering retain loss
     retain_model = None
     if retain_representations:
         retain_model = AutoModelForCausalLM.from_pretrained(retain_model_name)
@@ -395,14 +419,8 @@ def tar_training_loop(
         retain_model = accelerator.prepare_model(retain_model)
         retain_model.eval()
 
-    pref_dataloader = None
-    pref_iterator = None
-    is_dpo = tar_tamper_resistance_loss_type == "dpo"
-    if is_dpo:
-        pref_dataloader = forget_task_val_dataloader  # reusing 3rd dataloader arg
-        pref_iterator = iter(pref_dataloader)
-
     # FSDP requires initial forward/backward for sharded params to be accessible in `FlatParamHandle`
+    # Necessary for storing sharded params in FSDPModelStorage before the first TR step
     accelerator.backward(
         obj_standard_max_next_token(model, next(retain_iterator), accelerator)
     )
@@ -411,21 +429,18 @@ def tar_training_loop(
     tamper_resistance_loss = 0
     for _ in range(max_steps):
         tamper_resistance_loss = 0
-        # Save params for meta-optimizer step
+        # Save params for tamper-resistance-optimizer step
         model_storage.collect_param_or_grad(
             model=model,
             accelerator=accelerator,
             to_cpu=True,
             mode="params",
         )
-        outer_retain_batches, retain_iterator = next_n_batches(
-            retain_iterator, retain_dataloader, gradient_accumulation_steps
-        )
+
         optimizer.load_state_dict(move_to_device(optimizer.state_dict(), "cpu"))
         for _ in range(tar_num_tasks_sampled):
-            adversary_type = distributed_sample_task(adversary_dist_types)
-            adversary_lr_scheduler = distributed_sample_task(adversary_lr_schedulers)
             sub_pbar = None
+            adversary_type = distributed_sample_task(adversary_dist_types)
             if accelerator.is_main_process:
                 sub_pbar = tqdm(
                     colour="blue",
@@ -433,37 +448,26 @@ def tar_training_loop(
                     total=tar_inner_loop_steps,
                     dynamic_ncols=True,
                 )
+            adversary_lr_scheduler = distributed_sample_task(adversary_lr_schedulers)
 
-            meta_forget_batches = None
-            dpo_pref_batches = None
-            if is_dpo:
-                dpo_pref_batches, pref_iterator = next_n_batches(
-                    pref_iterator, pref_dataloader, gradient_accumulation_steps
-                )
-            else:
-                meta_forget_batches, forget_val_iterator = next_n_batches(
-                    forget_val_iterator,
-                    forget_task_val_dataloader,
-                    gradient_accumulation_steps,
-                )
+            # Sample heldout tamper-resistance batches (x_tr in Algorithm 1)
+            meta_forget_batches, forget_val_iterator = next_n_batches(
+                forget_val_iterator,
+                forget_task_val_dataloader,
+                gradient_accumulation_steps,
+            )
 
+            # Sample adversary learning rate
             adversary_lr = distributed_sample_adversary_lr(
                 adversary_lr_samples, accelerator
             )
 
-            sampled_steps = None
-            if tar_random_subsample:
-                num_samples = tar_inner_loop_steps // tar_inner_loop_subsample
-                sampled_steps = random.sample(range(tar_inner_loop_steps), num_samples)
-                dist.barrier()
-                sampled_steps = accelerate.utils.broadcast_object_list(
-                    [sampled_steps], 0
-                )[0]
-                accelerator.print(sampled_steps)
-
+            # Setup adversary optimizer
             inner_optimizer = torch.optim.AdamW(model.parameters(), lr=adversary_lr)
             inner_optimizer = accelerator.prepare_optimizer(inner_optimizer)
             inner_scheduler = None
+
+            # Setup adversary learning rate scheduler
             if adversary_lr_scheduler == "linear_warmup":
                 inner_scheduler = torch.optim.lr_scheduler.LambdaLR(
                     inner_optimizer,
@@ -471,81 +475,53 @@ def tar_training_loop(
                 )
                 inner_scheduler = accelerator.prepare(inner_scheduler)
 
+            # Sample switching point from beta distribution
+            M = None
             if adversary_type == "retain_forget_switch":
-                # sample switching point from beta dist ("alpha:0.3,beta:0.3")
-                coeffs = {
-                    k: float(v)
-                    for k, v in [
-                        item.split(":") for item in switching_point_coeffs.split(",")
-                    ]
-                }
-                M = int(
-                    torch.distributions.Beta(coeffs["alpha"], coeffs["beta"]).sample()
-                    * tar_inner_loop_steps
+                M = _sample_switching_point(
+                    switching_point_coeffs, tar_inner_loop_steps
                 )
-                dist.barrier()
-                M = accelerate.utils.broadcast_object_list([M], 0)[0]
-                accelerator.print(
-                    f"Switching at step: {M}; alpha: {coeffs['alpha']}, beta: {coeffs['beta']}"
-                )
+                accelerator.print(f"Switching at step: {M}")
 
             for inner_step in range(tar_inner_loop_steps):
-                # sample adversary data
-                adversary_batches = None
-                if is_dpo:
-                    adversary_batches, pref_iterator = next_n_batches(
-                        pref_iterator, pref_dataloader, gradient_accumulation_steps
-                    )
-                else:
-                    if adversary_type == "retain_forget_switch":
-                        retain_key = "adv_retain"
-                        if inner_step < M:
-                            (
-                                adversary_batches,
-                                adversary_dataloaders[retain_key]["iter"],
-                            ) = next_n_batches(
-                                adversary_dataloaders[retain_key]["iter"],
-                                adversary_dataloaders[retain_key]["dataloader"],
-                                gradient_accumulation_steps,
-                            )
-                        else:
-                            (
-                                adversary_batches,
-                                adversary_dataloaders[adversary_type]["iter"],
-                            ) = next_n_batches(
-                                adversary_dataloaders[adversary_type]["iter"],
-                                adversary_dataloaders[adversary_type]["dataloader"],
-                                gradient_accumulation_steps,
-                            )
+                # Sample adversary batches
+                _adversary_type = adversary_type
+                if adversary_type == "retain_forget_switch":
+                    if inner_step < M:
+                        _adversary_type = "adv_retain"
                     else:
-                        (
-                            adversary_batches,
-                            adversary_dataloaders[adversary_type]["iter"],
-                        ) = next_n_batches(
-                            adversary_dataloaders[adversary_type]["iter"],
-                            adversary_dataloaders[adversary_type]["dataloader"],
-                            gradient_accumulation_steps,
-                        )
+                        _adversary_type = "forget_train"
+                (
+                    adversary_batches,
+                    adversary_dataloaders[_adversary_type]["iter"],
+                ) = next_n_batches(
+                    adversary_dataloaders[_adversary_type]["iter"],
+                    adversary_dataloaders[_adversary_type]["dataloader"],
+                    gradient_accumulation_steps,
+                )
 
+                # Per-step tamper-resistance loss weighting schedule
                 scheduled_weighting = (
                     schedule(inner_step, tar_inner_loop_steps, schedule_lambda)
                     if use_weighting_schedule
                     else 1 / tar_inner_loop_steps
                 )
 
+                # Whether to compute TR grad for current step (sub-sampling trick from appendix)
                 compute_tamper_resistance_grad = (
                     inner_step + 1
                 ) % tar_inner_loop_subsample == 0
+
+                # Compute adversary step and tamper-resistance loss
                 tamper_resistance_loss += inner_loop_step(
                     model=model,
                     adversary_batches=adversary_batches,
                     meta_forget_batches=meta_forget_batches,
-                    dpo_pref_batches=dpo_pref_batches,
                     inner_optimizer=inner_optimizer,
                     inner_scheduler=inner_scheduler,
                     accelerator=accelerator,
                     gradient_accumulation_steps=gradient_accumulation_steps,
-                    meta_grad_scale=tar_meta_grad_scale
+                    meta_grad_scale=tar_tamper_resistance_grad_scale
                     * scheduled_weighting
                     / tar_num_tasks_sampled,
                     model_storage=model_storage,
@@ -569,7 +545,10 @@ def tar_training_loop(
             move_to_device(optimizer.state_dict(), optimizer.accelerator_state.device)
         )
 
-        # Tamper-resistance Optimizer Step
+        # Representation-engineering retain loss
+        outer_retain_batches, retain_iterator = next_n_batches(
+            retain_iterator, retain_dataloader, gradient_accumulation_steps
+        )
         total_retain_loss = 0
         for i in range(gradient_accumulation_steps):
             if retain_representations:
@@ -584,6 +563,7 @@ def tar_training_loop(
             accelerator.backward(retain_loss)
             total_retain_loss += retain_loss.item()
 
+        # Add tamper-resistance gradients to model
         if (
             tamper_resistance_loss >= tar_tamper_resistance_loss_lower_bound
             or unbounded
@@ -593,15 +573,19 @@ def tar_training_loop(
                 accelerator=accelerator,
                 mode="grads",
             )
+
+        # Clear from storage to reduce peak memory usage
         model_storage.clear_grads()
         model_storage.clear_params()
+
+        # Tamper-resistance meta-optimizer step
         optimizer.step()
         model.zero_grad(set_to_none=True)
         if accelerator.is_main_process:
             pbar.update(1)
             pbar.set_postfix(
                 {
-                    "retain loss /tamper_resistance_loss": f"{total_retain_loss} / {tamper_resistance_loss}"
+                    "retain loss / tamper_resistance_loss": f"{total_retain_loss} / {tamper_resistance_loss}"
                 }
             )
             wandb.log(
