@@ -14,7 +14,7 @@ from transformers import (
     LlamaForCausalLM,
 )
 
-from ..modules.dataloaders import get_bio_multi_dists_dataloaders, get_cyber_dataloaders #FIXME: Ensure import path is correct
+from ..modules.dataloaders import get_red_team_tar_bio_dataloaders, get_red_team_tar_cyber_dataloaders #FIXME: Ensure import path is correct
 from ..modules.training import single_dataloader_accel_finetune_loop, double_dataloader_accel_finetune_loop #FIXME: Ensure import path is correct
 from schedulers import get_exponential_warmup_scheduler, get_sgdr_scheduler, get_no_scheduler, get_linear_warmup_scheduler, get_warmup_with_annealing_scheduler
 from optimizers import get_sgd_with_momentum, get_sgd_with_nesterov_momentum, get_adam, get_adamW, get_adagrad, get_adadelta, get_adamW_schedule_free
@@ -22,14 +22,10 @@ import mmlu_eval.eval as eval
 from ..modules.utils import return_step_based_batch_selection
 
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaForCausalLM
-from transformers.models.phi.modeling_phi import PhiDecoderLayer, PhiForCausalLM
-from transformers.models.mistral.modeling_mistral import MistralDecoderLayer, MistralForCausalLM
-from transformers.models.qwen2.modeling_qwen2 import Qwen2DecoderLayer, Qwen2ForCausalLM
 
 import functools
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 from peft import LoraConfig, TaskType, get_peft_model
-from job_config import get_config
 
 from torch import distributed as dist
 
@@ -37,9 +33,6 @@ os.environ["WANDB_DISABLED"] = "false"
 
 ALLOWED_MODULES = [
     LlamaDecoderLayer,
-    PhiDecoderLayer,
-    MistralDecoderLayer,
-    Qwen2DecoderLayer
 ]
 
 def lambda_fn(module: torch.nn.Module):
@@ -65,7 +58,7 @@ def sft_red_teaming_evaluation(
     model_type: str,
     output_dir: str,
     loop_type=single_dataloader_accel_finetune_loop,
-    dataloader_type=get_bio_multi_dists_dataloaders,
+    dataloader_type=get_red_team_tar_bio_dataloaders,
     finetuning_data_type="forget",
     optimizer_type=get_adamW,
     args=None,
@@ -117,14 +110,14 @@ def sft_red_teaming_evaluation(
         model.print_trainable_parameters()
 
     with accelerator.main_process_first():
-        if dataloader_type == get_bio_multi_dists_dataloaders or dataloader_type == get_cyber_dataloaders:
+        if dataloader_type == get_red_team_tar_bio_dataloaders or dataloader_type == get_red_team_tar_cyber_dataloaders:
             all_dataloaders = dataloader_type(tokenizer=tokenizer, accelerator=accelerator, args=args)
         else:
             retain, forget_train, forget_test = dataloader_type(
                 tokenizer=tokenizer, accelerator=accelerator, args=args
             )
 
-    if dataloader_type == get_bio_multi_dists_dataloaders or dataloader_type == get_cyber_dataloaders:
+    if dataloader_type == get_red_team_tar_bio_dataloaders or dataloader_type == get_red_team_tar_cyber_dataloaders:
         forget_train = all_dataloaders[MULTI_DIST_MAP[args.training_strategy]]
         dataloaders = [all_dataloaders["pile-retain"], forget_train, all_dataloaders["meta"]]
     else:
@@ -217,17 +210,17 @@ TRAINING_CONFIG = {
     # Biosecurity
     "pure_pile_bio_forget": {
         "loop_type": single_dataloader_accel_finetune_loop,
-        "dataloader_type": get_bio_multi_dists_dataloaders,
+        "dataloader_type": get_red_team_tar_bio_dataloaders,
         "finetuning_data_type": "forget"
     },
     "pure_pile_bio_retain": {
         "loop_type":  single_dataloader_accel_finetune_loop,
-        "dataloader_type": get_bio_multi_dists_dataloaders,
+        "dataloader_type": get_red_team_tar_bio_dataloaders,
         "finetuning_data_type": "retain"
     },
     "pile_bio_retain_followed_by_pile_bio_forget": {
         "loop_type": double_dataloader_accel_finetune_loop,
-        "dataloader_type": get_bio_multi_dists_dataloaders,
+        "dataloader_type": get_red_team_tar_bio_dataloaders,
         "finetuning_data_type": "retain",
     },
 
@@ -237,17 +230,17 @@ TRAINING_CONFIG = {
     # Cybersecurity
     "cyber_and_pile_forget": {
         "loop_type": single_dataloader_accel_finetune_loop,
-        "dataloader_type": get_cyber_dataloaders,
+        "dataloader_type": get_red_team_tar_cyber_dataloaders,
         "finetuning_data_type": "forget"
     },
     "cyber_and_pile_retain": {
         "loop_type": single_dataloader_accel_finetune_loop,
-        "dataloader_type": get_cyber_dataloaders,
+        "dataloader_type": get_red_team_tar_cyber_dataloaders,
         "finetuning_data_type": "retain"
     },
     "cyber_retain_followed_by_forget": {
         "loop_type": double_dataloader_accel_finetune_loop,
-        "dataloader_type": get_cyber_dataloaders,
+        "dataloader_type": get_red_team_tar_cyber_dataloaders,
         "finetuning_data_type": "retain",
     },
 }
@@ -288,13 +281,6 @@ def main():
     args = parser.parse_args()
 
     fix_seed(args.seed)
-
-    is_slurm = os.environ.get("SLURM_ARRAY_TASK_ID") is not None
-    if is_slurm:
-        print("Running on SLURM ARRAY")
-        set_args = get_config(args.job_config_string)
-        for key, value in set_args.items():
-            setattr(args, key, value)
 
     sft_red_teaming_evaluation(
         model_name=args.model_name,

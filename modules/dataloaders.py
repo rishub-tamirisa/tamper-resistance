@@ -184,6 +184,9 @@ def get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
     }
     return dataloaders
 
+def get_red_team_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
+    dataloaders = get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs)
+    return dataloaders["forget_train"], dataloaders["retain"]
 
 def load_cyber_dataset():
     return load_dataset("justinwangx/CTFtime")
@@ -270,6 +273,9 @@ def get_tar_cyber_dataloaders(tokenizer, accelerator, args, **kwargs):
 
     return dataloaders
 
+def get_red_team_tar_cyber_dataloaders(tokenizer, accelerator, args, **kwargs):
+    dataloaders = get_tar_cyber_dataloaders(tokenizer, accelerator, args, **kwargs)
+    return dataloaders["forget_train"], dataloaders["retain"]
 
 def parse_conversation(conversation_string):
     pattern = r"(Human|Assistant):\s*(.*?)(?=\s*(?:Human|Assistant):\s*|$)"
