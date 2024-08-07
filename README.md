@@ -14,7 +14,7 @@ We introduce a novel method, Tampering Attack Resistance (TAR), which is the fir
 - [☕ Quick Start ☕](#Quick-Start)
   - [⚙️ Installation](#Installation)
   - [🛠️ Running Tamper-Resistance Training](#Running-Tamper-Resistance-Training)
-  <!-- - [➕ Running the Red-teaming evaluation](#Red-teaming-evaluation) -->
+  - [➕ Running the Red-teaming evaluation](#Red-teaming-evaluation)
 - [📁 Directory Structure](#Directory-Structure)
 - [🤗 Models and Datasets](#Models-and-Datasets)
 - [🙏 Citation 🙏](#Citation)
@@ -89,7 +89,9 @@ With the appropriate GPU setup, and assuming the `.env` is correctly set, simply
 sh run_tar_bio.sh
 ```
 
-<!-- ### ➕ Running the Red-teaming evaluation -->
+### ➕ Running the Red-teaming evaluation
+
+In the `red_teaming` folder, `red_teaming_evaluation.py` serves as the entrypoint for running the red-teaming evaluations from the paper. Most methods use full-parameter training, so scripts should be launched with `accelerate` similar to the setup in the `run_tar_bio.sh` and `run_tar_cyber.sh` scripts.
 
 ## 🤗 Models and Datasets
 
