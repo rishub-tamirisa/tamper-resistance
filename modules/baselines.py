@@ -239,7 +239,7 @@ DATALOADER_MAP = {
 }
 
 BASELINE_MAP = {
-    "random_mapping": random_mapping_training_loop,
+    "random_mapping": random_vectors_training_loop,
     "min_posterior": min_posterior_training_loop,
     "max_entropy": max_entropy_training_loop,
     "llmu": llmu_training_loop,
