@@ -1,17 +1,21 @@
 # 🛡️ Tamper-Resistant Safeguards for Open-Weight LLMs 🤖
 
+![Tamper-Resistant Safeguards](assets/tamper-resistant.png)
+
+
 We introduce a novel method, Tampering Attack Resistance (TAR), which is the first defense to withstand a significant number of open-weight fine-tuning attacks on LLMs, while preserving model capabilities.
 
 
 ## Table of Contents
 
 - [📰 Latest News 📰](#Latest-News)
-- [🛡️ What are Tamper-Resistant Safeguards 🛡️](#What-are-Tamper-Resistant-Safeguards)
+- [🛡️ What are Tamper-Resistant Safeguards? 🛡️](#What-are-Tamper-Resistant-Safeguards)
 - [🌐 Overview 🌐](#Overview)
 - [☕ Quick Start ☕](#Quick-Start)
   - [⚙️ Installation](#Installation)
   - [🛠️ Running Tamper-Resistance Training](#Running-Tamper-Resistance-Training)
   <!-- - [➕ Running the Red-teaming evaluation](#Red-teaming-evaluation) -->
+- [📁 Directory Structure](#Directory-Structure)
 - [🤗 Models and Datasets](#Models-and-Datasets)
 - [🙏 Citation 🙏](#Citation)
 
@@ -56,12 +60,28 @@ This repository contains implementations for TAR (including the Random Mapping i
 > Do not push your `.env` file to a public repository. Since it contains your Huggingface token and other secrets, it could lead to unauthorized access to your Huggingface account. We've already included it in the `.gitignore` file to prevent this.
   
 
+### 📁 Directory Structure
+
+`tar.py` serves as the main entrypoint for running the TAR method. It uses python modules in the `modules` folder. Example usage is provided in the `run_tar_bio.sh` and `run_tar_cyber.sh` scripts.
+
+The `modules` folder contains the following files:
+- `baselines.py`: Entrypoint for running baseline methods
+- `dataloaders.py`: Dataloader implementations
+- `objectives.py`: Objective / loss function implementations
+- `fsdp_v1_utils.py`: Utilities for FSDP v1
+- `training.py`: All training loop implementations, including TAR
+- `utils.py`: Helper functions
+ 
+
+
 ### 🛠️ Running Tamper-Resistance Training
 
 We provide scripts in the root-level folder for running TAR for biosecurity and cybersecurity: `run_tar_bio.sh` and `run_tar_cyber.sh`.
 
 
-It's recommended to run Llama-3-8B-Instruct models (or similar size) on systems with `8xA100 80G` or larger due to full-parameter training and other overheads introduced by the first-order meta-learning implementation.
+It's recommended to run Llama-3-8B-Instruct models (or similar size) on systems with `8xA100 80G` or more VRAM due to full-parameter training and other overheads introduced by the first-order meta-learning implementation. 
+
+Note: the code is currently untested on multi-node environments, we expect to support this upon migration to the [recently released `FSDP2` from PyTorch 2.4](https://pytorch.org/blog/pytorch2-4/#prototype-fsdp2-dtensor-based-per-parameter-sharding-fsdp).
 
 With the appropriate GPU setup, and assuming the `.env` is correctly set, simply run:
 

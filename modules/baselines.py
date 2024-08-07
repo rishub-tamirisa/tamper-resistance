@@ -3,7 +3,7 @@ import torch
 import argparse
 import random
 import numpy as np
-from config import SAVE_MODELS_DIR #FIXME: Does this still work?
+from configs.config import SAVE_MODELS_DIR 
 import datasets
 datasets.builder.has_sufficient_disk_space = lambda needed_bytes, directory='.': True
 import wandb
@@ -18,8 +18,8 @@ from transformers import (
     LlamaForCausalLM,
 )
 
-from dataloaders import get_bio_multi_dists_dataloaders, get_cyber_dataloaders #FIXME: Ensure import path is correct
-from training import random_mapping_training_loop, llmu_training_loop, max_entropy_training_loop, min_posterior_training_loop #FIXME: Ensure import path is correct
+from dataloaders import get_tar_bio_dataloaders, get_tar_cyber_dataloaders 
+from training import random_mapping_training_loop, llmu_training_loop, max_entropy_training_loop, min_posterior_training_loop
 
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaForCausalLM
 from transformers.models.phi.modeling_phi import PhiDecoderLayer, PhiForCausalLM
@@ -28,11 +28,10 @@ from transformers.models.mistral.modeling_mistral import MistralDecoderLayer, Mi
 from transformers.models.qwen2.modeling_qwen2 import Qwen2DecoderLayer, Qwen2ForCausalLM
 from transformers.models.gemma2.modeling_gemma2 import Gemma2DecoderLayer, Gemma2ForCausalLM
 
-import ..red_teaming.mmlu_eval.eval as eval #FIXME: Does this still work?
+import red_teaming.mmlu_eval.eval as eval
 
 import functools
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
-from job_config import get_config
 
 GRAD_ACCUM_STEPS = 1
 
@@ -69,7 +68,7 @@ def baseline(
     model_type: str,
     output_dir: str,
     loop_type=random_mapping_training_loop,
-    dataloader_type=get_bio_multi_dists_dataloaders,
+    dataloader_type=get_tar_bio_dataloaders,
     args=None,
 ):
     accelerator = Accelerator(
@@ -97,14 +96,14 @@ def baseline(
     tokenizer.pad_token = tokenizer.eos_token
 
     with accelerator.main_process_first():
-        if dataloader_type == get_bio_multi_dists_dataloaders or dataloader_type == get_cyber_dataloaders:
+        if dataloader_type == get_tar_bio_dataloaders or dataloader_type == get_tar_cyber_dataloaders:
             all_dataloaders = dataloader_type(tokenizer=tokenizer, accelerator=accelerator, args=args)
         else:
             retain, forget_train, forget_test = dataloader_type(
                 tokenizer=tokenizer, accelerator=accelerator, args=args
             )
 
-    if dataloader_type == get_bio_multi_dists_dataloaders or dataloader_type == get_cyber_dataloaders:
+    if dataloader_type == get_tar_bio_dataloaders or dataloader_type == get_tar_cyber_dataloaders:
         forget_train = all_dataloaders[DATALOADER_MAP[args.dataloader_type]["forget_train_split_key"]]
         dataloaders = [all_dataloaders["pile-retain"], forget_train, all_dataloaders["meta"]]
     else:
@@ -164,17 +163,17 @@ def baseline(
 
 DATALOADER_MAP = {
     "bio": {
-        "dataloader_name": get_bio_multi_dists_dataloaders,
+        "dataloader_name": get_tar_bio_dataloaders,
         "forget_train_split_key": "bio-combined",
     },
     "cyber": {
-        "dataloader_name" : get_cyber_dataloaders,
+        "dataloader_name" : get_tar_cyber_dataloaders,
         "forget_train_split_key": "forget_train",
     }
 }
 
 BASELINE_MAP = {
-    "random_mapping": random_vectors_training_loop,
+    "random_mapping": random_mapping_training_loop,
     "min_posterior": min_posterior_training_loop,
     "max_entropy": max_entropy_training_loop,
     "llmu": llmu_training_loop,
@@ -211,12 +210,6 @@ def main():
 
     args = parser.parse_args()
     fix_seed()
-    is_slurm = os.environ.get("SLURM_ARRAY_TASK_ID") is not None
-    if is_slurm:
-        print("Running on SLURM ARRAY")
-        set_args = get_config(args.job_config_string)
-        for key, value in set_args.items():
-            setattr(args, key, value)
     baseline(
         model_name=args.model_name,
         model_type=args.model_type,
