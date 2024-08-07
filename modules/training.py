@@ -19,7 +19,7 @@ from modules.objectives import (
     obj_standard_max_next_token,
     random_vector_cosine_obj,
     obj_mismatch_next_token,
-    obj_max_adv_posterior,
+    obj_max_entropy_next_token,
     max_entropy_loss,
     log_1_minus_p_loss,
 )
