@@ -1,3 +1,19 @@
+#NOTE: The following were the Biosecurity forget subjects excluded during the Pre-Attack MMLU Retain Accuracy Calculation
+bio_forget_subjects = [
+    "college_biology",
+    "high_school_biology",
+    "medical_genetics",
+    "virology",
+    "college_medicine",
+    "anatomy",
+    "clinical_knowledge",
+]
+
+#NOTE: The following were the Cybersecurity forget subjects excluded during the Pre-Attack MMLU Retain Accuracy Calculation
+cyber_forget_subjects = [
+    "computer security",
+]
+
 subjects = [
     "abstract_algebra",
     "anatomy",
@@ -132,16 +148,3 @@ categories = {
     "other (business, health, misc.)": ["other", "business", "health"],
 }
 
-cyber_forget_subjects = [
-    "computer security",
-]
-
-bio_forget_subjects = [
-    "college_biology",
-    "high_school_biology",
-    "medical_genetics",
-    "virology",
-    "college_medicine",
-    "anatomy",
-    "clinical_knowledge",
-]
