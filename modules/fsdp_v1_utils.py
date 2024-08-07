@@ -2,16 +2,20 @@ from accelerate import Accelerator
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 
-def fsdp_model_params(model: FSDP):
+# TODO: refactor for FSDP2
+def fsdp_v1_model_params(model: FSDP):
+    """
+    Get all model parameters via FSDP handles
+    """
     sharded_params = set()
     nonsharded_params = set()  # `NO
-    for i, handle in enumerate(model._all_handles):
+    for _, handle in enumerate(model._all_handles):
         target_set = (
             sharded_params if handle.uses_sharded_strategy else nonsharded_params
         )
         target_set.add(handle.flat_param)
         yield handle.flat_param
-    for name, param in model.named_parameters():
+    for _, param in model.named_parameters():
         not_fsdp_managed = (
             param not in sharded_params and param not in nonsharded_params
         )
@@ -21,6 +25,10 @@ def fsdp_model_params(model: FSDP):
 
 
 class FSDPModelStorage:
+    """
+    Storage for sharded model parameters and gradients for accumulation during TAR
+    """
+
     def __init__(self):
         self.storage_dict = {
             "params": {},
@@ -41,7 +49,17 @@ class FSDPModelStorage:
         mode: str = "grads",
         scale: float = 1.0,
     ):
-        for i, param in enumerate(fsdp_model_params(model)):
+        """
+        Collect parameters or gradients from the FSDP model and store them.
+
+        Args:
+            model (FSDP): The FSDP model to collect from.
+            accelerator (Accelerator): The Accelerator object (unused in this function).
+            to_cpu (bool): Whether to move the collected data to CPU.
+            mode (str): Either "params" or "grads" to collect parameters or gradients.
+            scale (float): Scaling factor for gradients.
+        """
+        for i, param in enumerate(fsdp_v1_model_params(model)):
             if mode == "params":
                 self.storage_dict["params"][i] = param.detach().clone()
                 if to_cpu:
@@ -73,7 +91,16 @@ class FSDPModelStorage:
         skip_check: bool = False,
         mode: str = "grads",
     ):
-        for i, param in enumerate(fsdp_model_params(model)):
+        """
+        Add parameters or gradients from storage to the FSDP model.
+
+        Args:
+            model (FSDP): The FSDP model to add to.
+            accelerator (Accelerator): The Accelerator object (unused in this function).
+            skip_check (bool): Whether to skip the assertion check for gradient existence.
+            mode (str): Either "params" or "grads" to add parameters or gradients.
+        """
+        for i, param in enumerate(fsdp_v1_model_params(model)):
             if mode == "params":
                 param.data.copy_(self.storage_dict["params"][i].to(param.device))
             # assert either both storage and handle have grads or neither do
@@ -82,4 +109,3 @@ class FSDPModelStorage:
             if i in self.storage_dict["grads"] and param.grad is not None:
                 if mode == "grads":
                     param.grad += self.storage_dict["grads"][i].to(param.device)
-                    # param.requires_grad_(True)
