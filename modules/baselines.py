@@ -19,7 +19,7 @@ from transformers import (
 )
 
 from dataloaders import get_bio_multi_dists_dataloaders, get_cyber_dataloaders #FIXME: Ensure import path is correct
-from training import random_vectors_training_loop, llmu_training_loop, max_entropy_training_loop, min_posterior_training_loop #FIXME: Ensure import path is correct
+from training import random_mapping_training_loop, llmu_training_loop, max_entropy_training_loop, min_posterior_training_loop #FIXME: Ensure import path is correct
 
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaForCausalLM
 from transformers.models.phi.modeling_phi import PhiDecoderLayer, PhiForCausalLM
@@ -63,60 +63,6 @@ def fix_seed():
     np.random.seed(42)
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
-
-# def random_mapping(model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
-#     model = random_vectors_training_loop(
-#         model, 
-#         r_d,
-#         f_d, 
-#         optimizer, 
-#         accelerator, 
-#         num_epochs, 
-#         gradient_accumulation_steps, 
-#         max_steps=args.max_steps, 
-#         args=args,
-#     )
-#     return model
-
-
-# def min_posterior(model, base_model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
-#     model = min_posterior_training_loop(
-#         model,
-#         r_d,
-#         f_d,
-#         optimizer,
-#         accelerator,
-#         num_epochs,
-#         gradient_accumulation_steps,
-#         max_steps=args.max_steps,
-#     )
-#     return model
-
-# def max_entropy(model, base_model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
-#     model = max_entropy_training_loop(
-#         model,
-#         r_d,
-#         f_d,
-#         optimizer,
-#         accelerator,
-#         num_epochs,
-#         gradient_accumulation_steps,
-#         max_steps=args.max_steps,
-#     )
-#     return model
-
-# def llmu(model, base_model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
-#     model = llmu_training_loop(
-#         model,
-#         r_d,
-#         f_d,
-#         optimizer,
-#         accelerator,
-#         num_epochs,
-#         gradient_accumulation_steps,
-#         max_steps=args.max_steps,
-#     )
-#     return model
 
 def baseline(
     model_name: str,
@@ -215,17 +161,6 @@ def baseline(
 
     accelerator.print(f"Model saved to {output_dir}.")
 
-# MULTI_DIST_MAP = {
-#     "bio_rvp": "bio-combined",
-#     "bio_min_posterior": "bio-combined",
-#     "bio_max_entropy": "bio-combined",
-#     "bio_llmu": "bio-combined",
-
-#     "cyber_rvp": "forget_train",
-#     "cyber_min_posterior": "forget_train",
-#     "cyber_max_entropy": "forget_train",
-#     "cyber_llmu": "forget_train",
-# }
 
 DATALOADER_MAP = {
     "bio": {
@@ -244,45 +179,6 @@ BASELINE_MAP = {
     "max_entropy": max_entropy_training_loop,
     "llmu": llmu_training_loop,
 }
-
-# TRAINING_CONFIG = {
-#     #NOTE: The Chemical Security dataset is private.
-#     "bio_random_mapping": {
-#         "loop_type": random_mapping,
-#         "dataloader_type": get_bio_multi_dists_dataloaders,
-#     },
-#     "cyber_random_mapping": {
-#         "loop_type": random_mapping,
-#         "dataloader_type": get_cyber_dataloaders,
-#     },
-
-#     "bio_min_posterior": {
-#         "loop_type": min_posterior,
-#         "dataloader_type": get_bio_multi_dists_dataloaders,
-#     },
-#     "cyber_min_posterior": {
-#         "loop_type": min_posterior,
-#         "dataloader_type": get_cyber_dataloaders,
-#     },
-
-#     "bio_max_entropy": {
-#         "loop_type": max_entropy,
-#         "dataloader_type": get_bio_multi_dists_dataloaders,
-#     },
-#     "cyber_max_entropy": {
-#         "loop_type": max_entropy,
-#         "dataloader_type": get_cyber_dataloaders,
-#     },
-
-#     "bio_llmu": {
-#         "loop_type": llmu,
-#         "dataloader_type": get_bio_multi_dists_dataloaders,
-#     },
-#     "cyber_llmu": {
-#         "loop_type": llmu,
-#         "dataloader_type": get_cyber_dataloaders,
-#     },
-# }
 
 def main():
     torch.cuda.empty_cache()
