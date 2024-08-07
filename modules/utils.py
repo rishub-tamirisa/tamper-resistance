@@ -9,6 +9,34 @@ from accelerate import Accelerator
 from accelerate import utils as accelerate_utils
 from accelerate.optimizer import AcceleratedOptimizer, move_to_device
 from torch.nn.utils.rnn import pad_sequence
+import numpy as np
+
+
+def fix_seed(seed: int = 42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def return_coin_flip_batch_selection(
+    prob_of_selecting_retain_batch: float = 0.5, **kwargs
+):
+    return torch.rand(1) < prob_of_selecting_retain_batch
+
+
+def return_step_based_batch_selection(
+    current_step: int,
+    max_steps: int,
+    prop_steps_for_batch_selection: float = 0.60,
+    **kwargs,
+):
+    bool_result = current_step < int(max_steps * np.abs(prop_steps_for_batch_selection))
+    return bool_result if prop_steps_for_batch_selection > 0 else not bool_result
+
+
+def _filter_inputs(inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    return {k: v for k, v in inputs.items() if k != "concept_label" and k != "labels"}
 
 
 def get_distributed_random_number(accelerator: Accelerator):

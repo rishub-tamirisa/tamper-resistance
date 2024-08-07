@@ -9,23 +9,38 @@ from accelerate import Accelerator
 from accelerate.optimizer import AcceleratedOptimizer, move_to_device
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from modules.fsdp_v1_utils import FSDPModelStorage
 from modules.objectives import (
+    log_p_loss,
     dpo_loss_obj,
-    obj_max_entropy_next_token,
     obj_model_mse_representations,
     obj_standard_max_next_token,
     random_vector_cosine_obj,
+    obj_mismatch_next_token,
+    obj_max_entropy_next_token,
+    max_entropy_loss,
+    log_1_minus_p_loss,
 )
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from tqdm import tqdm
+from transformers import AutoModelForCausalLM
 from modules.utils import (
     delete_optimizer,
     distributed_sample_adversary_lr,
     distributed_sample_task,
     get_next_batch,
     next_n_batches,
+    _filter_inputs,
+    return_coin_flip_batch_selection,
+    return_step_based_batch_selection,
 )
+
+
+#######################################################################
+# BASELINES
+#######################################################################
 
 
 def random_mapping_training_loop(
@@ -104,6 +119,535 @@ def random_mapping_training_loop(
                 pbar.set_postfix({"lm_loss": total_lm_loss, "cos_loss": total_cos_loss})
                 wandb.log({"lm_loss": total_lm_loss, "cos_loss": total_cos_loss})
     return model
+
+
+def min_posterior_training_loop(
+    model: torch.nn.Module,
+    dataloaders: dict[str, torch.utils.data.DataLoader],
+    optimizer: AcceleratedOptimizer,
+    accelerator: Accelerator,
+    num_epochs: int,
+    gradient_accumulation_steps: int,
+    max_steps: int = -1,
+    **kwargs,
+):
+    """
+    Performs minimum posterior training loop for a given model.
+
+    This function trains the model to minimize the posterior probability on forget data
+    while maximizing it on retain data.
+
+    Args:
+        model (torch.nn.Module): The model to be trained.
+        dataloaders (dict[str, torch.utils.data.DataLoader]): A dictionary containing dataloaders for 'retain' and 'forget_train' datasets.
+        optimizer (AcceleratedOptimizer): The optimizer used for training.
+        accelerator (Accelerator): The Accelerator object for distributed training.
+        num_epochs (int): The number of epochs to train for.
+        gradient_accumulation_steps (int): The number of steps to accumulate gradients before performing a backward/update pass.
+        max_steps (int, optional): The maximum number of steps to train for. If -1, train for the entire dataset. Defaults to -1.
+        **kwargs: Additional keyword arguments.
+
+    Returns:
+        torch.nn.Module: The trained model.
+    """
+    model.config.use_cache = False
+    model.train()
+    model.zero_grad(set_to_none=True)
+    retain_iterator, retain_dataloader = (
+        iter(dataloaders["retain"]),
+        dataloaders["retain"],
+    )
+    forget_iterator, forget_dataloader = (
+        iter(dataloaders["forget_train"]),
+        dataloaders["forget_train"],
+    )
+    total_length = max_steps
+    for epoch in range(num_epochs):
+        if accelerator.is_main_process:
+            pbar = tqdm(
+                colour="blue",
+                desc=f"Training Epoch: {epoch+1}",
+                total=total_length,
+                dynamic_ncols=True,
+            )
+        for _ in range(total_length):
+            total_loss = 0
+            for _ in range(gradient_accumulation_steps):
+                retain_batch, retain_iterator = get_next_batch(
+                    retain_iterator, retain_dataloader
+                )
+
+                batch_squeezed = {
+                    key: value.squeeze()
+                    for key, value in retain_batch.items()
+                    if key in ["input_ids", "labels", "attention_mask"]
+                }
+                outputs = model(
+                    **_filter_inputs(batch_squeezed), output_hidden_states=False
+                )
+                retain_loss = (
+                    log_p_loss(
+                        outputs.logits, batch_squeezed.get("labels"), model.vocab_size
+                    )
+                    / gradient_accumulation_steps
+                )
+                accelerator.backward(retain_loss)
+
+                forget_batch, forget_iterator = get_next_batch(
+                    forget_iterator, forget_dataloader
+                )
+                forget_loss = (
+                    log_1_minus_p_loss(
+                        outputs.logits, batch_squeezed.get("labels"), model.vocab_size
+                    )
+                    / gradient_accumulation_steps
+                )
+                accelerator.backward(forget_loss)
+                total_loss += retain_loss.item() + forget_loss.item()
+            optimizer.step()
+            model.zero_grad(set_to_none=True)
+            if accelerator.is_main_process:
+                pbar.update(1)
+                pbar.set_postfix({"loss": total_loss})
+                wandb.log({"loss": total_loss})
+    return model
+
+
+def max_entropy_training_loop(
+    model: torch.nn.Module,
+    dataloaders: dict[str, torch.utils.data.DataLoader],
+    optimizer: AcceleratedOptimizer,
+    accelerator: Accelerator,
+    num_epochs: int,
+    gradient_accumulation_steps: int,
+    max_steps: int = -1,
+    **kwargs,
+):
+    """
+    Performs a training loop using a max entropy loss on forget-set data.
+
+    This function trains the model on retain data using log probability loss and on forget data
+    using max entropy loss. It supports distributed training and gradient accumulation.
+
+    Args:
+        model (torch.nn.Module): The model to be trained.
+        dataloaders (dict[str, torch.utils.data.DataLoader]): Dictionary containing dataloaders
+            for 'retain' and 'forget_train' datasets.
+        optimizer (AcceleratedOptimizer): The optimizer for model parameter updates.
+        accelerator (Accelerator): The Accelerator object for distributed training.
+        num_epochs (int): Number of training epochs.
+        gradient_accumulation_steps (int): Number of steps to accumulate gradients.
+        max_steps (int, optional): Maximum number of training steps per epoch. Defaults to -1.
+        **kwargs: Additional keyword arguments.
+
+    Returns:
+        torch.nn.Module: The trained model.
+    """
+    model.config.use_cache = False
+    model.train()
+    model.zero_grad(set_to_none=True)
+    retain_iterator, retain_dataloader = (
+        iter(dataloaders["retain"]),
+        dataloaders["retain"],
+    )
+    forget_iterator, forget_dataloader = (
+        iter(dataloaders["forget_train"]),
+        dataloaders["forget_train"],
+    )
+    total_length = max_steps
+    for epoch in range(num_epochs):
+        if accelerator.is_main_process:
+            pbar = tqdm(
+                colour="blue",
+                desc=f"Training Epoch: {epoch+1}",
+                total=total_length,
+                dynamic_ncols=True,
+            )
+        for _ in range(total_length):
+            total_loss = 0
+            for _ in range(gradient_accumulation_steps):
+                retain_batch, retain_iterator = get_next_batch(
+                    retain_iterator, retain_dataloader
+                )
+                batch_squeezed = {
+                    key: value.squeeze()
+                    for key, value in retain_batch.items()
+                    if key in ["input_ids", "labels", "attention_mask"]
+                }
+                outputs = model(
+                    **_filter_inputs(batch_squeezed), output_hidden_states=False
+                )
+                retain_loss = (
+                    log_p_loss(
+                        outputs.logits, batch_squeezed.get("labels"), model.vocab_size
+                    )
+                    / gradient_accumulation_steps
+                )
+                accelerator.backward(retain_loss)
+
+                forget_batch, forget_iterator = get_next_batch(
+                    forget_iterator, forget_dataloader
+                )
+                batch_squeezed = {
+                    key: value.squeeze()
+                    for key, value in retain_batch.items()
+                    if key in ["input_ids", "labels", "attention_mask"]
+                }
+                outputs = model(
+                    **_filter_inputs(batch_squeezed), output_hidden_states=False
+                )
+                forget_loss = (
+                    max_entropy_loss(
+                        outputs.logits, batch_squeezed.get("labels"), model.vocab_size
+                    )
+                    / gradient_accumulation_steps
+                )
+                accelerator.backward(forget_loss)
+                total_loss += retain_loss.item() + forget_loss.item()
+
+            optimizer.step()
+            model.zero_grad(set_to_none=True)
+            if accelerator.is_main_process:
+                pbar.update(1)
+                pbar.set_postfix({"loss": total_loss})
+                wandb.log({"loss": total_loss})
+    return model
+
+
+def llmu_training_loop(
+    model: torch.nn.Module,
+    dataloaders: dict[str, torch.utils.data.DataLoader],
+    optimizer: AcceleratedOptimizer,
+    accelerator: Accelerator,
+    num_epochs: int,
+    gradient_accumulation_steps: int,
+    max_steps: int = -1,
+    **kwargs,
+):
+    """
+    Performs a training loop from the LLMU (Large Language Model Unlearning) paper (https://arxiv.org/pdf/2310.10683).
+
+    This function implements a training loop with three types of losses:
+    1. Retain loss: For retaining existing knowledge
+    2. Forget loss: For forgetting specific information
+    3. Mismatch loss: For ensuring mismatched predictions on forgotten data
+
+    We replace the KL-divergence loss w/base model from the original paper with a cross-entropy loss on the retain set.
+
+    Args:
+        model (torch.nn.Module): The model to be trained.
+        dataloaders (dict[str, torch.utils.data.DataLoader]): Dictionary containing dataloaders
+            for 'retain' and 'forget_train' datasets.
+        optimizer (AcceleratedOptimizer): The optimizer for model parameter updates.
+        accelerator (Accelerator): The Accelerator object for distributed training.
+        num_epochs (int): Number of training epochs.
+        gradient_accumulation_steps (int): Number of steps to accumulate gradients.
+        max_steps (int, optional): Maximum number of training steps per epoch. Defaults to -1 (no limit).
+        **kwargs: Additional keyword arguments.
+
+    Returns:
+        torch.nn.Module: The trained model.
+    """
+    model.config.use_cache = False
+    model.train()
+    model.zero_grad(set_to_none=True)
+    retain_iterator, retain_dataloader = (
+        iter(dataloaders["retain"]),
+        dataloaders["retain"],
+    )
+    forget_iterator, forget_dataloader = (
+        iter(dataloaders["forget_train"]),
+        dataloaders["forget_train"],
+    )
+    total_length = max_steps
+    for epoch in range(num_epochs):
+        if accelerator.is_main_process:
+            pbar = tqdm(
+                colour="blue",
+                desc=f"Training Epoch: {epoch+1}",
+                total=total_length,
+                dynamic_ncols=True,
+            )
+        for _ in range(total_length):
+            total_loss = 0
+            for _ in range(gradient_accumulation_steps):
+                retain_batch, retain_iterator = get_next_batch(
+                    retain_iterator, retain_dataloader
+                )
+                retain_loss = obj_standard_max_next_token(model, retain_batch)
+                retain_loss = retain_loss / gradient_accumulation_steps
+                accelerator.backward(retain_loss)
+
+                forget_batch, forget_iterator = get_next_batch(
+                    forget_iterator, forget_dataloader
+                )
+                forget_loss = obj_standard_max_next_token(model, forget_batch) * -1
+                forget_loss = forget_loss / gradient_accumulation_steps
+
+                accelerator.backward(forget_loss)
+
+                mismatch_batch, retain_iterator = get_next_batch(
+                    retain_iterator, retain_dataloader
+                )
+                mismatch_loss = obj_mismatch_next_token(
+                    model, forget_batch, mismatch_batch
+                )
+                mismatch_loss = mismatch_loss / gradient_accumulation_steps
+                accelerator.backward(mismatch_loss)
+
+                total_loss += (
+                    retain_loss.item() + forget_loss.item() + mismatch_loss.item()
+                )
+
+            optimizer.step()
+            model.zero_grad(set_to_none=True)
+            if accelerator.is_main_process:
+                pbar.update(1)
+                pbar.set_postfix({"loss": total_loss})
+                wandb.log({"loss": total_loss})
+    return model
+
+
+#######################################################################
+# RED TEAMING
+#######################################################################
+
+
+def single_dataloader_accel_finetune_loop(
+    model: torch.nn.Module,
+    tokenizer: AutoTokenizer,
+    retain_dataloader: torch.utils.data.DataLoader,
+    forget_train_dataloader: torch.utils.data.DataLoader,
+    forget_test_dataloader: torch.utils.data.DataLoader,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LambdaLR,
+    accelerator: Accelerator,
+    num_epochs: int,
+    gradient_accumulation_steps: int,
+    max_steps: int = -1,
+    **kwargs,
+):
+    """
+    Performs a single dataloader accelerated finetuning loop.
+
+    This function finetunes the model using either the retain or forget dataset,
+    based on the specified finetuning_data_type. It supports distributed training
+    and gradient accumulation.
+
+    Args:
+        model (torch.nn.Module): The model to be finetuned.
+        tokenizer (AutoTokenizer): The tokenizer for processing input data.
+        retain_dataloader (torch.utils.data.DataLoader): DataLoader for retain dataset.
+        forget_train_dataloader (torch.utils.data.DataLoader): DataLoader for forget training dataset.
+        forget_test_dataloader (torch.utils.data.DataLoader): DataLoader for forget testing dataset.
+        optimizer (torch.optim.Optimizer): The optimizer for model parameter updates.
+        scheduler (torch.optim.lr_scheduler.LambdaLR): Learning rate scheduler.
+        accelerator (Accelerator): The Accelerator object for distributed training.
+        num_epochs (int): Number of training epochs.
+        gradient_accumulation_steps (int): Number of steps to accumulate gradients.
+        max_steps (int, optional): Maximum number of training steps per epoch. Defaults to -1.
+        **kwargs: Additional keyword arguments, including finetuning_data_type and scheduler_type.
+
+    Returns:
+        torch.nn.Module: The finetuned model.
+    """
+    model.config.use_cache = False
+    model.train()
+    model.zero_grad(set_to_none=True)
+
+    total_length = max_steps
+
+    if kwargs["finetuning_data_type"] == "retain":
+        with_grad_iterator = iter(retain_dataloader)
+        with_no_grad_iterator = iter(forget_train_dataloader)
+        with_grad_dataloader = retain_dataloader
+        with_no_grad_dataloader = forget_train_dataloader
+        wandb_with_grad_label = "finetuning_retain_loss"
+        wandb_with_no_grad_label = "finetuning_training_loss"
+    elif kwargs["finetuning_data_type"] == "forget":
+        with_grad_iterator = iter(forget_train_dataloader)
+        with_no_grad_iterator = iter(retain_dataloader)
+        with_grad_dataloader = forget_train_dataloader
+        with_no_grad_dataloader = retain_dataloader
+        wandb_with_grad_label = "finetuning_training_loss"
+        wandb_with_no_grad_label = "finetuning_retain_loss"
+    else:
+        raise ValueError("Invalid finetune type")
+
+    for epoch in range(num_epochs):
+        pbar = tqdm(
+            colour="blue",
+            desc=f"Training Epoch: {epoch+1}",
+            total=total_length,
+            dynamic_ncols=True,
+        )
+        for i in range(max_steps):
+            with_grad_loss = 0
+            with_no_grad_loss = 0
+            for _ in range(gradient_accumulation_steps):
+                accelerator.wait_for_everyone()
+                batch, with_grad_iterator = get_next_batch(
+                    with_grad_iterator, with_grad_dataloader
+                )
+                batch_squeezed = {
+                    key: value.squeeze()
+                    for key, value in batch.items()
+                    if key in ["input_ids", "labels", "attention_mask"]
+                }
+                outputs = model(
+                    **_filter_inputs(batch_squeezed), output_hidden_states=False
+                )
+                loss = (
+                    log_p_loss(
+                        outputs.logits, batch_squeezed.get("labels"), model.vocab_size
+                    )
+                    / gradient_accumulation_steps
+                )
+                with_grad_loss += loss.item()
+                accelerator.backward(loss)
+                accelerator.wait_for_everyone()
+
+            if accelerator.is_main_process:
+                wandb.log(
+                    {
+                        wandb_with_grad_label: with_grad_loss,
+                        wandb_with_no_grad_label: with_no_grad_loss,
+                    }
+                )
+            optimizer.step()
+            optimizer.zero_grad()
+            if kwargs["scheduler_type"] == "sgdr":
+                scheduler.step(i)
+            else:
+                scheduler.step()
+            model.zero_grad(set_to_none=True)
+            pbar.update(1)
+            pbar.set_postfix({"loss": with_grad_loss})
+    return model
+
+
+def double_dataloader_accel_finetune_loop(
+    model: torch.nn.Module,
+    tokenizer: AutoTokenizer,
+    retain_dataloader: torch.utils.data.DataLoader,
+    forget_train_dataloader: torch.utils.data.DataLoader,
+    forget_test_dataloader: torch.utils.data.DataLoader,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LambdaLR,
+    accelerator: Accelerator,
+    num_epochs: int,
+    gradient_accumulation_steps: int,
+    max_steps: int = -1,
+    **kwargs,
+):
+    """
+    Performs accelerated finetuning using two dataloaders for retain and forget datasets.
+
+    Args:
+        model (torch.nn.Module): The model to be finetuned.
+        tokenizer (AutoTokenizer): The tokenizer for processing input text.
+        retain_dataloader (torch.utils.data.DataLoader): DataLoader for the retain dataset.
+        forget_train_dataloader (torch.utils.data.DataLoader): DataLoader for the forget training dataset.
+        forget_test_dataloader (torch.utils.data.DataLoader): DataLoader for the forget testing dataset.
+        optimizer (torch.optim.Optimizer): The optimizer for updating model parameters.
+        scheduler (torch.optim.lr_scheduler.LambdaLR): Learning rate scheduler.
+        accelerator (Accelerator): Accelerator for distributed training.
+        num_epochs (int): Number of training epochs.
+        gradient_accumulation_steps (int): Number of steps to accumulate gradients before performing a backward/update pass.
+        max_steps (int, optional): Maximum number of training steps. Defaults to -1 (no limit).
+        **kwargs: Additional keyword arguments.
+
+    Returns:
+        torch.nn.Module: The finetuned model.
+    """
+    model.config.use_cache = False
+    model.train()
+    model.zero_grad(set_to_none=True)
+
+    total_length = max_steps
+
+    if kwargs["finetuning_data_type"] == "retain":
+        with_grad_iterator = iter(retain_dataloader)
+        with_no_grad_iterator = iter(forget_train_dataloader)
+        with_grad_dataloader = retain_dataloader
+        with_no_grad_dataloader = forget_train_dataloader
+        wandb_with_grad_label = "finetuning_retain_loss"
+        wandb_with_no_grad_label = "finetuning_training_loss"
+    elif kwargs["finetuning_data_type"] == "forget":
+        with_grad_iterator = iter(forget_train_dataloader)
+        with_no_grad_iterator = iter(retain_dataloader)
+        with_grad_dataloader = forget_train_dataloader
+        with_no_grad_dataloader = retain_dataloader
+        wandb_with_grad_label = "finetuning_training_loss"
+        wandb_with_no_grad_label = "finetuning_retain_loss"
+    else:
+        raise ValueError("Invalid finetune type")
+
+    for epoch in range(num_epochs):
+        pbar = tqdm(
+            colour="blue",
+            desc=f"Training Epoch: {epoch+1}",
+            total=total_length,
+            dynamic_ncols=True,
+        )
+        for i in range(max_steps):
+            finetuning_loss = 0
+            for _ in range(gradient_accumulation_steps):
+                accelerator.wait_for_everyone()
+                if kwargs["batch_selection_method"](
+                    current_step=i,
+                    max_steps=max_steps,
+                    prop_steps_for_batch_selection=kwargs[
+                        "prop_steps_for_batch_selection"
+                    ],
+                ):
+                    batch, with_grad_iterator = get_next_batch(
+                        with_grad_iterator, with_grad_dataloader
+                    )
+                else:
+                    batch, with_no_grad_iterator = get_next_batch(
+                        with_no_grad_iterator, with_no_grad_dataloader
+                    )
+
+                accelerator.wait_for_everyone()
+
+                batch_squeezed = {
+                    key: value.squeeze()
+                    for key, value in batch.items()
+                    if key in ["input_ids", "labels", "attention_mask"]
+                }
+                outputs = model(
+                    **_filter_inputs(batch_squeezed), output_hidden_states=False
+                )
+                loss = (
+                    log_p_loss(
+                        outputs.logits, batch_squeezed.get("labels"), model.vocab_size
+                    )
+                    / gradient_accumulation_steps
+                )
+                finetuning_loss += loss.item()
+                accelerator.backward(loss)
+                accelerator.wait_for_everyone()
+
+            if accelerator.is_main_process:
+                wandb.log({"finetuning_training_loss": finetuning_loss})
+
+            optimizer.step()
+            optimizer.zero_grad()
+            if kwargs["scheduler_type"] == "sgdr":
+                scheduler.step(i)
+            else:
+                scheduler.step()
+            model.zero_grad(set_to_none=True)
+            pbar.update(1)
+            pbar.set_postfix({"loss": finetuning_loss})
+
+    return model
+
+
+#######################################################################
+# TAMPER RESISTANCE
+#######################################################################
 
 
 def adversary_next_token_obj_step(
