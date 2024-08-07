@@ -131,6 +131,25 @@ def min_posterior_training_loop(
     max_steps: int = -1,
     **kwargs,
 ):
+    """
+    Performs minimum posterior training loop for a given model.
+
+    This function trains the model to minimize the posterior probability on forget data
+    while maximizing it on retain data.
+
+    Args:
+        model (torch.nn.Module): The model to be trained.
+        dataloaders (dict[str, torch.utils.data.DataLoader]): A dictionary containing dataloaders for 'retain' and 'forget_train' datasets.
+        optimizer (AcceleratedOptimizer): The optimizer used for training.
+        accelerator (Accelerator): The Accelerator object for distributed training.
+        num_epochs (int): The number of epochs to train for.
+        gradient_accumulation_steps (int): The number of steps to accumulate gradients before performing a backward/update pass.
+        max_steps (int, optional): The maximum number of steps to train for. If -1, train for the entire dataset. Defaults to -1.
+        **kwargs: Additional keyword arguments.
+
+    Returns:
+        torch.nn.Module: The trained model.
+    """
     model.config.use_cache = False
     model.train()
     model.zero_grad(set_to_none=True)
@@ -187,6 +206,26 @@ def max_entropy_training_loop(
     max_steps: int = -1,
     **kwargs,
 ):
+    """
+    Performs a training loop using a max entropy loss on forget-set data.
+
+    This function trains the model on retain data using log probability loss and on forget data
+    using max entropy loss. It supports distributed training and gradient accumulation.
+
+    Args:
+        model (torch.nn.Module): The model to be trained.
+        dataloaders (dict[str, torch.utils.data.DataLoader]): Dictionary containing dataloaders
+            for 'retain' and 'forget_train' datasets.
+        optimizer (AcceleratedOptimizer): The optimizer for model parameter updates.
+        accelerator (Accelerator): The Accelerator object for distributed training.
+        num_epochs (int): Number of training epochs.
+        gradient_accumulation_steps (int): Number of steps to accumulate gradients.
+        max_steps (int, optional): Maximum number of training steps per epoch. Defaults to -1.
+        **kwargs: Additional keyword arguments.
+
+    Returns:
+        torch.nn.Module: The trained model.
+    """
     model.config.use_cache = False
     model.train()
     model.zero_grad(set_to_none=True)
@@ -245,6 +284,30 @@ def llmu_training_loop(
     max_steps: int = -1,
     **kwargs,
 ):
+    """
+    Performs a training loop from the LLMU (Large Language Model Unlearning) paper (https://arxiv.org/pdf/2310.10683).
+
+    This function implements a training loop with three types of losses:
+    1. Retain loss: For retaining existing knowledge
+    2. Forget loss: For forgetting specific information
+    3. Mismatch loss: For ensuring mismatched predictions on forgotten data
+
+    We replace the KL-divergence loss w/base model from the original paper with a cross-entropy loss on the retain set.
+
+    Args:
+        model (torch.nn.Module): The model to be trained.
+        dataloaders (dict[str, torch.utils.data.DataLoader]): Dictionary containing dataloaders
+            for 'retain' and 'forget_train' datasets.
+        optimizer (AcceleratedOptimizer): The optimizer for model parameter updates.
+        accelerator (Accelerator): The Accelerator object for distributed training.
+        num_epochs (int): Number of training epochs.
+        gradient_accumulation_steps (int): Number of steps to accumulate gradients.
+        max_steps (int, optional): Maximum number of training steps per epoch. Defaults to -1 (no limit).
+        **kwargs: Additional keyword arguments.
+
+    Returns:
+        torch.nn.Module: The trained model.
+    """
     model.config.use_cache = False
     model.train()
     model.zero_grad(set_to_none=True)
@@ -328,6 +391,30 @@ def single_dataloader_accel_finetune_loop(
     max_steps: int = -1,
     **kwargs,
 ):
+    """
+    Performs a single dataloader accelerated finetuning loop.
+
+    This function finetunes the model using either the retain or forget dataset,
+    based on the specified finetuning_data_type. It supports distributed training
+    and gradient accumulation.
+
+    Args:
+        model (torch.nn.Module): The model to be finetuned.
+        tokenizer (AutoTokenizer): The tokenizer for processing input data.
+        retain_dataloader (torch.utils.data.DataLoader): DataLoader for retain dataset.
+        forget_train_dataloader (torch.utils.data.DataLoader): DataLoader for forget training dataset.
+        forget_test_dataloader (torch.utils.data.DataLoader): DataLoader for forget testing dataset.
+        optimizer (torch.optim.Optimizer): The optimizer for model parameter updates.
+        scheduler (torch.optim.lr_scheduler.LambdaLR): Learning rate scheduler.
+        accelerator (Accelerator): The Accelerator object for distributed training.
+        num_epochs (int): Number of training epochs.
+        gradient_accumulation_steps (int): Number of steps to accumulate gradients.
+        max_steps (int, optional): Maximum number of training steps per epoch. Defaults to -1.
+        **kwargs: Additional keyword arguments, including finetuning_data_type and scheduler_type.
+
+    Returns:
+        torch.nn.Module: The finetuned model.
+    """
     model.config.use_cache = False
     model.train()
     model.zero_grad(set_to_none=True)
@@ -398,6 +485,26 @@ def double_dataloader_accel_finetune_loop(
     max_steps: int = -1,
     **kwargs,
 ):
+    """
+    Performs accelerated finetuning using two dataloaders for retain and forget datasets.
+
+    Args:
+        model (torch.nn.Module): The model to be finetuned.
+        tokenizer (AutoTokenizer): The tokenizer for processing input text.
+        retain_dataloader (torch.utils.data.DataLoader): DataLoader for the retain dataset.
+        forget_train_dataloader (torch.utils.data.DataLoader): DataLoader for the forget training dataset.
+        forget_test_dataloader (torch.utils.data.DataLoader): DataLoader for the forget testing dataset.
+        optimizer (torch.optim.Optimizer): The optimizer for updating model parameters.
+        scheduler (torch.optim.lr_scheduler.LambdaLR): Learning rate scheduler.
+        accelerator (Accelerator): Accelerator for distributed training.
+        num_epochs (int): Number of training epochs.
+        gradient_accumulation_steps (int): Number of steps to accumulate gradients before performing a backward/update pass.
+        max_steps (int, optional): Maximum number of training steps. Defaults to -1 (no limit).
+        **kwargs: Additional keyword arguments.
+
+    Returns:
+        torch.nn.Module: The finetuned model.
+    """
     model.config.use_cache = False
     model.train()
     model.zero_grad(set_to_none=True)
