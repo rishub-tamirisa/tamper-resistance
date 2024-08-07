@@ -45,7 +45,7 @@ To modify the script for your specific needs, consider the following areas:
 
 3. **Training Strategies**: Add or modify entries in the `TRAINING_CONFIG` dictionary to define new training strategies. Each strategy specifies the loop type, dataloader type, and fine-tuning data type (Retain or Forget). To use existing Biosecurity and Cyber Security dataloaders with different distributions, modify the 'multi_dist_key_name' field in the 'TRAINING_CONFIG' to one of the following:
 
-   For biosecurity:
+   For Biosecurity:
    - "retain": Mixed Pile Bio Retain and Magpie Retain
    - "pile-bio": Pure Pile Bio Retain and Forget
    - "camel-bio": Pure Camel Bio Forget
@@ -53,7 +53,7 @@ To modify the script for your specific needs, consider the following areas:
    - "adv_retain": Pure Pile Bio Retain
    - "meta": Pure Pile Bio Forget Test
 
-   For cybersecurity:
+   For Cybersecurity:
    - "retain": Cyber Retain
    - "adv_retain": Cyber Retain
    - "forget_train": Cyber Forget
