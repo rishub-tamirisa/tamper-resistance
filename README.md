@@ -30,7 +30,7 @@ Tamper-Resistant Safeguards are security measures designed for open-weight large
 
 ## 🌐 Overview 🌐
 
-This repository contains implementations for TAR (including the Random Mapping initial safeguard), red-teaming evaluation, and baseline methods. The current implementation assumes that models from 🤗 Transformers, meaning they have the expected configs, subclasses, etc. However, in principle the FSDP wrapping can be made compatible with any model. We plan to update the code to be more agnostic when we migrate to FSDP v2.
+This repository contains implementations for TAR (including the Random Mapping initial safeguard), red-teaming evaluation, and baseline methods. The current implementation assumes that models come from 🤗 Transformers, meaning they have the expected configs, subclasses, etc. However, the FSDP wrapping can be made compatible with any model. We plan to update the code to be more agnostic when we migrate to FSDP v2.
 
 ## ☕ Quick Start ☕
 
@@ -93,7 +93,7 @@ sh run_tar_bio.sh
 
 ## 🤗 Models and Datasets
 
-We release models and datasets used to replicate the Bio and Cyber experiments in our paper here: [🤗 Huggingface Collection](https://huggingface.co/collections/lapisrocks/tamper-resistant-safeguards-for-open-weight-llms-66b2dc4cc40442c79ec890a5).
+We release models and datasets here: [🤗 Huggingface Collection](https://huggingface.co/collections/lapisrocks/tamper-resistant-safeguards-for-open-weight-llms-66b2dc4cc40442c79ec890a5).
 
 ## Citation
 
