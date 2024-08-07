@@ -64,65 +64,65 @@ def fix_seed():
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
 
-def random_mapping(model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
-    model = random_vectors_training_loop(
-        model, 
-        r_d,
-        f_d, 
-        optimizer, 
-        accelerator, 
-        num_epochs, 
-        gradient_accumulation_steps, 
-        max_steps=args.max_steps, 
-        args=args,
-    )
-    return model
+# def random_mapping(model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
+#     model = random_vectors_training_loop(
+#         model, 
+#         r_d,
+#         f_d, 
+#         optimizer, 
+#         accelerator, 
+#         num_epochs, 
+#         gradient_accumulation_steps, 
+#         max_steps=args.max_steps, 
+#         args=args,
+#     )
+#     return model
 
 
-def min_posterior(model, base_model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
-    model = min_posterior_training_loop(
-        model,
-        r_d,
-        f_d,
-        optimizer,
-        accelerator,
-        num_epochs,
-        gradient_accumulation_steps,
-        max_steps=args.max_steps,
-    )
-    return model
+# def min_posterior(model, base_model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
+#     model = min_posterior_training_loop(
+#         model,
+#         r_d,
+#         f_d,
+#         optimizer,
+#         accelerator,
+#         num_epochs,
+#         gradient_accumulation_steps,
+#         max_steps=args.max_steps,
+#     )
+#     return model
 
-def max_entropy(model, base_model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
-    model = max_entropy_training_loop(
-        model,
-        r_d,
-        f_d,
-        optimizer,
-        accelerator,
-        num_epochs,
-        gradient_accumulation_steps,
-        max_steps=args.max_steps,
-    )
-    return model
+# def max_entropy(model, base_model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
+#     model = max_entropy_training_loop(
+#         model,
+#         r_d,
+#         f_d,
+#         optimizer,
+#         accelerator,
+#         num_epochs,
+#         gradient_accumulation_steps,
+#         max_steps=args.max_steps,
+#     )
+#     return model
 
-def llmu(model, base_model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
-    model = llmu_training_loop(
-        model,
-        r_d,
-        f_d,
-        optimizer,
-        accelerator,
-        num_epochs,
-        gradient_accumulation_steps,
-        max_steps=args.max_steps,
-    )
-    return model
+# def llmu(model, base_model, r_d, f_d, optimizer, accelerator, num_epochs, gradient_accumulation_steps, args):
+#     model = llmu_training_loop(
+#         model,
+#         r_d,
+#         f_d,
+#         optimizer,
+#         accelerator,
+#         num_epochs,
+#         gradient_accumulation_steps,
+#         max_steps=args.max_steps,
+#     )
+#     return model
 
 def baseline(
     model_name: str,
     model_type: str,
     output_dir: str,
-    loop_type=random_mapping,
+    loop_type=random_mapping_training_loop,
     dataloader_type=get_bio_multi_dists_dataloaders,
     args=None,
 ):
@@ -239,10 +239,10 @@ DATALOADER_MAP = {
 }
 
 BASELINE_MAP = {
-    "random_mapping": random_mapping,
-    "min_posterior": min_posterior,
-    "max_entropy": max_entropy,
-    "llmu": llmu,
+    "random_mapping": random_mapping_training_loop,
+    "min_posterior": min_posterior_training_loop,
+    "max_entropy": max_entropy_training_loop,
+    "llmu": llmu_training_loop,
 }
 
 # TRAINING_CONFIG = {
