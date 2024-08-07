@@ -4,9 +4,11 @@ import torch
 import os
 import pandas as pd
 
+
 def load_csv_dataset(path: str = None):
     ds = load_dataset("csv", data_files=path)
     return ds
+
 
 def get_eval_datasets(
     tokenizer,
@@ -65,7 +67,9 @@ def get_eval_datasets(
 
         dev_directory = os.path.join(path, "dev")
 
-        dev_df = pd.read_csv(os.path.join(dev_directory, subject + "_dev.csv"), header=0)[:k]
+        dev_df = pd.read_csv(
+            os.path.join(dev_directory, subject + "_dev.csv"), header=0
+        )[:k]
 
         prompt_end = format_question(
             sample["question"],
@@ -111,7 +115,7 @@ def get_eval_datasets(
         else:
             result["labels"] = tokenized_label["input_ids"]
         return result
-    
+
     test_directory = os.path.join(path, "test")
     eval_dataset = load_csv_dataset(os.path.join(test_directory, subject + "_test.csv"))
 
@@ -132,13 +136,9 @@ def get_eval_datasets(
 
     tokenized_eval = eval_dataset["train"]
 
-    tokenized_dataset = DatasetDict(
-        {"train": tokenized_eval}
-    )
+    tokenized_dataset = DatasetDict({"train": tokenized_eval})
 
-    data_collator = DataCollatorForTokenClassification(
-        tokenizer, return_tensors="pt"
-    )
+    data_collator = DataCollatorForTokenClassification(tokenizer, return_tensors="pt")
 
     return tokenized_dataset, data_collator
 

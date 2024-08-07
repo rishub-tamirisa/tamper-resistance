@@ -137,11 +137,11 @@ cyber_forget_subjects = [
 ]
 
 bio_forget_subjects = [
-    'college_biology', 
-    'high_school_biology', 
-    'medical_genetics', 
-    'virology', 
-    'college_medicine', 
-    'anatomy', 
-    'clinical_knowledge'
+    "college_biology",
+    "high_school_biology",
+    "medical_genetics",
+    "virology",
+    "college_medicine",
+    "anatomy",
+    "clinical_knowledge",
 ]

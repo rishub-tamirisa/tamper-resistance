@@ -3,9 +3,10 @@ import torch
 import argparse
 import random
 import numpy as np
-from configs.config import SAVE_MODELS_DIR 
+from configs.config import SAVE_MODELS_DIR
 import datasets
-datasets.builder.has_sufficient_disk_space = lambda needed_bytes, directory='.': True
+
+datasets.builder.has_sufficient_disk_space = lambda needed_bytes, directory=".": True
 import wandb
 
 import schedulefree
@@ -18,15 +19,27 @@ from transformers import (
     LlamaForCausalLM,
 )
 
-from dataloaders import get_tar_bio_dataloaders, get_tar_cyber_dataloaders 
-from training import random_mapping_training_loop, llmu_training_loop, max_entropy_training_loop, min_posterior_training_loop
+from dataloaders import get_tar_bio_dataloaders, get_tar_cyber_dataloaders
+from training import (
+    random_mapping_training_loop,
+    llmu_training_loop,
+    max_entropy_training_loop,
+    min_posterior_training_loop,
+)
 
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaForCausalLM
 from transformers.models.phi.modeling_phi import PhiDecoderLayer, PhiForCausalLM
-from transformers.models.mistral.modeling_mistral import MistralDecoderLayer, MistralForCausalLM
-#from mistral_common.tokens.tokenizers.mistral import MistralTokenizer #pip install mistral_common
+from transformers.models.mistral.modeling_mistral import (
+    MistralDecoderLayer,
+    MistralForCausalLM,
+)
+
+# from mistral_common.tokens.tokenizers.mistral import MistralTokenizer #pip install mistral_common
 from transformers.models.qwen2.modeling_qwen2 import Qwen2DecoderLayer, Qwen2ForCausalLM
-from transformers.models.gemma2.modeling_gemma2 import Gemma2DecoderLayer, Gemma2ForCausalLM
+from transformers.models.gemma2.modeling_gemma2 import (
+    Gemma2DecoderLayer,
+    Gemma2ForCausalLM,
+)
 
 import red_teaming.mmlu_eval.eval as eval
 
@@ -45,11 +58,13 @@ ALLOWED_MODULES = [
     Gemma2DecoderLayer,
 ]
 
+
 def lambda_fn(module: torch.nn.Module):
     for allowed_module in ALLOWED_MODULES:
         if isinstance(module, allowed_module):
             return True
     return False
+
 
 auto_wrap_policy = functools.partial(lambda_auto_wrap_policy, lambda_fn=lambda_fn)
 
@@ -57,11 +72,13 @@ FSDP_PLUGIN = FullyShardedDataParallelPlugin(
     auto_wrap_policy=auto_wrap_policy,
 )
 
+
 def fix_seed():
     random.seed(42)
     np.random.seed(42)
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
+
 
 def baseline(
     model_name: str,
@@ -91,21 +108,37 @@ def baseline(
         model = LlamaForCausalLM(config)
         model_type = "meta-llama/Meta-Llama-3-8B"
     else:
-        model = AutoModelForCausalLM.from_pretrained(model_name)#, attn_implementation='eager')
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name
+        )  # , attn_implementation='eager')
     tokenizer = AutoTokenizer.from_pretrained(model_type)
     tokenizer.pad_token = tokenizer.eos_token
 
     with accelerator.main_process_first():
-        if dataloader_type == get_tar_bio_dataloaders or dataloader_type == get_tar_cyber_dataloaders:
-            all_dataloaders = dataloader_type(tokenizer=tokenizer, accelerator=accelerator, args=args)
+        if (
+            dataloader_type == get_tar_bio_dataloaders
+            or dataloader_type == get_tar_cyber_dataloaders
+        ):
+            all_dataloaders = dataloader_type(
+                tokenizer=tokenizer, accelerator=accelerator, args=args
+            )
         else:
             retain, forget_train, forget_test = dataloader_type(
                 tokenizer=tokenizer, accelerator=accelerator, args=args
             )
 
-    if dataloader_type == get_tar_bio_dataloaders or dataloader_type == get_tar_cyber_dataloaders:
-        forget_train = all_dataloaders[DATALOADER_MAP[args.dataloader_type]["forget_train_split_key"]]
-        dataloaders = [all_dataloaders["pile-retain"], forget_train, all_dataloaders["meta"]]
+    if (
+        dataloader_type == get_tar_bio_dataloaders
+        or dataloader_type == get_tar_cyber_dataloaders
+    ):
+        forget_train = all_dataloaders[
+            DATALOADER_MAP[args.dataloader_type]["forget_train_split_key"]
+        ]
+        dataloaders = [
+            all_dataloaders["pile-retain"],
+            forget_train,
+            all_dataloaders["meta"],
+        ]
     else:
         dataloaders = [retain, forget_train, forget_test]
 
@@ -114,7 +147,9 @@ def baseline(
     accelerator.print(f"Model prepared.")
     accelerator.print(f"Output dir: {output_dir}")
 
-    optimizer = schedulefree.AdamWScheduleFree(model.parameters(), lr=args.learning_rate, warmup_steps=args.warmup_steps)
+    optimizer = schedulefree.AdamWScheduleFree(
+        model.parameters(), lr=args.learning_rate, warmup_steps=args.warmup_steps
+    )
 
     num_epochs = args.num_epochs
 
@@ -135,21 +170,28 @@ def baseline(
     if args.evaluate:
         accelerator.print("Evaluation mode enabled.")
         accelerator.print("Evaluating model.")
-        use_eos_token = True if args.model_type == "meta-llama/Meta-Llama-3-8B-Instruct" or args.model_type == "Qwen/Qwen2-7B-Instruct" else False
+        use_eos_token = (
+            True
+            if args.model_type == "meta-llama/Meta-Llama-3-8B-Instruct"
+            or args.model_type == "Qwen/Qwen2-7B-Instruct"
+            else False
+        )
         user = os.environ.get("USER")
-        eval_args = type('Args', (object,), 
-        {
-            'batch_size': 2, 
-            "num_fewshot_examples": 5, 
-            'max_seq_len': 4096, 
-            'path_to_data': f"/data/{user}/capabilities-removal/batched_evaluation/data",
-            'disable_file_writes': True,
-            'eos_pad_token': use_eos_token,
-            'save_file_dir': args.save_model_name,
-        })
+        eval_args = type(
+            "Args",
+            (object,),
+            {
+                "batch_size": 2,
+                "num_fewshot_examples": 5,
+                "max_seq_len": 4096,
+                "path_to_data": f"/data/{user}/capabilities-removal/batched_evaluation/data",
+                "disable_file_writes": True,
+                "eos_pad_token": use_eos_token,
+                "save_file_dir": args.save_model_name,
+            },
+        )
         eval.evaluate_model(model, tokenizer, accelerator, eval_args)
         accelerator.print("Evaluation complete.")
-
 
     accelerator.unwrap_model(model).save_pretrained(
         output_dir,
@@ -167,9 +209,9 @@ DATALOADER_MAP = {
         "forget_train_split_key": "bio-combined",
     },
     "cyber": {
-        "dataloader_name" : get_tar_cyber_dataloaders,
+        "dataloader_name": get_tar_cyber_dataloaders,
         "forget_train_split_key": "forget_train",
-    }
+    },
 }
 
 BASELINE_MAP = {
@@ -179,15 +221,14 @@ BASELINE_MAP = {
     "llmu": llmu_training_loop,
 }
 
+
 def main():
     torch.cuda.empty_cache()
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--model_name", "-mn", type=str, default="meta-llama/Meta-Llama-3-8B-Instruct" 
+        "--model_name", "-mn", type=str, default="meta-llama/Meta-Llama-3-8B-Instruct"
     )
-    parser.add_argument(
-        "--save_model_name", "-smn", type=str, default="max_ent_test"
-    )
+    parser.add_argument("--save_model_name", "-smn", type=str, default="max_ent_test")
     parser.add_argument(
         "--model_type", "-mt", type=str, default="meta-llama/Meta-Llama-3-8B-Instruct"
     )
@@ -201,9 +242,7 @@ def main():
 
     parser.add_argument("--warmup_steps", "-ws", type=int, default=100)
     parser.add_argument("--max_steps", "-ms", type=int, default=1000)
-    parser.add_argument("--learning_rate", "-lr", type=float, default=1e-5) #5e-6 for good result
-
-
+    parser.add_argument("--learning_rate", "-lr", type=float, default=1e-5)
 
     parser.add_argument("--wandb", "-wb", action="store_true")
     parser.add_argument("--evaluate", "-e", action="store_true")
@@ -219,7 +258,6 @@ def main():
         args=args,
     )
 
+
 if __name__ == "__main__":
     main()
-
-#  accelerate launch --config_file $FxACCEL_CONFIG relearning_evaluation.py --model_name /scratch/bcar/models/mlac_trainer_llama2v2 --model_type meta-llama/Llama-2-7b-chat-hf --batch_size 4 --subject cell_mol_bio --training_strategy retain_strategy

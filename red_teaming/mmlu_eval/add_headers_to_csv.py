@@ -7,6 +7,7 @@ from tqdm import tqdm
 import csv
 import argparse
 
+
 def check_dir_has_headers(directory):
     for filename in os.listdir(directory):
         if filename.endswith(".csv"):
@@ -14,10 +15,18 @@ def check_dir_has_headers(directory):
                 reader = csv.reader(f)
                 data = list(reader)
 
-            has_header = len(data) > 0 and data[0] == ["question", "choice1", "choice2", "choice3", "choice4", "answer"]
+            has_header = len(data) > 0 and data[0] == [
+                "question",
+                "choice1",
+                "choice2",
+                "choice3",
+                "choice4",
+                "answer",
+            ]
             if not has_header:
                 return False
     return True
+
 
 def add_header_to_csv(directory):
     for filename in tqdm(os.listdir(directory)):
@@ -26,20 +35,37 @@ def add_header_to_csv(directory):
                 reader = csv.reader(f)
                 data = list(reader)
 
-            has_header = len(data) > 0 and data[0] == ["question", "choice1", "choice2", "choice3", "choice4", "answer"]
+            has_header = len(data) > 0 and data[0] == [
+                "question",
+                "choice1",
+                "choice2",
+                "choice3",
+                "choice4",
+                "answer",
+            ]
             if not has_header:
-                data.insert(0, ["question", "choice1", "choice2", "choice3", "choice4", "answer"])
+                data.insert(
+                    0,
+                    ["question", "choice1", "choice2", "choice3", "choice4", "answer"],
+                )
                 with open(os.path.join(directory, filename), "w", newline="") as f:
                     writer = csv.writer(f)
                     writer.writerows(data)
 
+
 def main():
     parser = argparse.ArgumentParser()
     user = os.environ.get("USER")
-    parser.add_argument("--directory", type=str, help="directory containing MMLU .csv files", default="data/")
+    parser.add_argument(
+        "--directory",
+        type=str,
+        help="directory containing MMLU .csv files",
+        default="data/",
+    )
     args = parser.parse_args()
     add_header_to_csv(os.path.join(args.directory, "dev"))
     add_header_to_csv(os.path.join(args.directory, "test"))
+
 
 if __name__ == "__main__":
     main()
