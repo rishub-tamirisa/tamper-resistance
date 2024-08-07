@@ -3,7 +3,7 @@ import torch
 import argparse
 import random
 import numpy as np
-from ..configs.config import SAVE_MODELS_DIR  # FIXME: Ensure import path is correct
+from ..configs.config import SAVE_MODELS_DIR
 import wandb
 
 from accelerate import Accelerator, FullyShardedDataParallelPlugin
@@ -17,11 +17,11 @@ from transformers import (
 from ..modules.dataloaders import (
     get_red_team_tar_bio_dataloaders,
     get_red_team_tar_cyber_dataloaders,
-)  # FIXME: Ensure import path is correct
+)
 from ..modules.training import (
     single_dataloader_accel_finetune_loop,
     double_dataloader_accel_finetune_loop,
-)  # FIXME: Ensure import path is correct
+)
 from schedulers import (
     get_exponential_warmup_scheduler,
     get_sgdr_scheduler,
@@ -48,34 +48,30 @@ from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 from peft import LoraConfig, TaskType, get_peft_model
 
 from torch import distributed as dist
+from ..modules.utils import fix_seed
 
+# Disable Weights & Biases logging if needed
 os.environ["WANDB_DISABLED"] = "false"
 
+# Define allowed modules for FSDP wrapping
 ALLOWED_MODULES = [
     LlamaDecoderLayer,
 ]
 
-
+# Function to determine if a module should be wrapped
 def lambda_fn(module: torch.nn.Module):
     for allowed_module in ALLOWED_MODULES:
         if isinstance(module, allowed_module):
             return True
     return False
 
-
+# Create auto wrap policy for FSDP
 auto_wrap_policy = functools.partial(lambda_auto_wrap_policy, lambda_fn=lambda_fn)
 
+# Configure FSDP plugin
 FSDP_PLUGIN = FullyShardedDataParallelPlugin(
     auto_wrap_policy=auto_wrap_policy,
 )
-
-
-def fix_seed(seed: int = 42):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
 
 def sft_red_teaming_evaluation(
     model_name: str,
@@ -87,11 +83,29 @@ def sft_red_teaming_evaluation(
     optimizer_type=get_adamW,
     args=None,
 ):
+    """
+    Main function for SFT (Supervised Fine-Tuning) Red Teaming Evaluation.
+
+    Args:
+        model_name (str): Name of the model to be fine-tuned.
+        model_type (str): Type of the model (e.g., "meta-llama/Meta-Llama-3-8B-Instruct").
+        output_dir (str): Directory to save the fine-tuned model.
+        loop_type (function): Training loop function to use.
+        dataloader_type (function): Function to get dataloaders.
+        finetuning_data_type (str): Type of fine-tuning data ("forget" or "retain").
+        optimizer_type (function): Function to get the optimizer.
+        args (argparse.Namespace): Command-line arguments.
+
+    Returns:
+        None. Saves the fine-tuned model to the specified output directory.
+    """
+    # Initialize Accelerator for distributed training
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         fsdp_plugin=FSDP_PLUGIN,
     )
 
+    # Initialize Weights & Biases logging for the main process
     if accelerator.is_main_process:
         wandb.login()
         run = wandb.init(
@@ -105,6 +119,7 @@ def sft_red_teaming_evaluation(
 
     gradient_accumulation_steps = args.gradient_accumulation_steps
 
+    # Load model and tokenizer
     if model_name == "random_llama":
         config = LlamaConfig()
         model = LlamaForCausalLM(config)
@@ -114,6 +129,7 @@ def sft_red_teaming_evaluation(
     tokenizer = AutoTokenizer.from_pretrained(model_type)
     tokenizer.pad_token = tokenizer.eos_token
 
+    # Configure PEFT (Parameter Efficient Fine-Tuning) if enabled
     if args.peft:
         accelerator.print("Parameter Efficient Fine-Tuning (PEFT) enabled")
         lora_config = LoraConfig(
@@ -134,6 +150,7 @@ def sft_red_teaming_evaluation(
         model = get_peft_model(model, lora_config)
         model.print_trainable_parameters()
 
+    # Prepare dataloaders
     with accelerator.main_process_first():
         if (
             dataloader_type == get_red_team_tar_bio_dataloaders
@@ -151,7 +168,7 @@ def sft_red_teaming_evaluation(
         dataloader_type == get_red_team_tar_bio_dataloaders
         or dataloader_type == get_red_team_tar_cyber_dataloaders
     ):
-        forget_train = all_dataloaders[MULTI_DIST_MAP[args.training_strategy]]
+        forget_train = all_dataloaders[TRAINING_CONFIG[args.training_strategy]["multi_dist_key_name"]]
         dataloaders = [
             all_dataloaders["pile-retain"],
             forget_train,
@@ -160,6 +177,7 @@ def sft_red_teaming_evaluation(
     else:
         dataloaders = [retain, forget_train, forget_test]
 
+    # Prepare model, optimizer, and scheduler
     accelerator.free_memory()
     model = accelerator.prepare_model(model)
     accelerator.print(f"Model prepared.")
@@ -170,6 +188,7 @@ def sft_red_teaming_evaluation(
 
     optimizer = optimizer_type(model, args.learning_rate, warmup_steps=warmup_steps)
 
+    # Select scheduler based on args
     if args.scheduler_type == "sgdr":
         scheduler = get_sgdr_scheduler(optimizer)
     elif args.scheduler_type == "warmup_with_annealing":
@@ -193,6 +212,7 @@ def sft_red_teaming_evaluation(
 
     accelerator.print(f"Optimizer, Scheduler, and Dataloaders prepared.")
 
+    # Run the training loop
     model = loop_type(
         model,
         tokenizer,
@@ -213,6 +233,7 @@ def sft_red_teaming_evaluation(
 
     accelerator.wait_for_everyone()
 
+    # Evaluate the model if specified
     if args.evaluate:
         accelerator.print("Evaluation mode enabled.")
         accelerator.print("Evaluating model.")
@@ -230,7 +251,7 @@ def sft_red_teaming_evaluation(
                 "batch_size": 2,
                 "num_fewshot_examples": 5,
                 "max_seq_len": 4096,
-                "path_to_data": f"/data/{user}/capabilities-removal/batched_evaluation/data",
+                "path_to_data": "mmlu_eval/data",
                 "disable_file_writes": True,
                 "eos_pad_token": use_eos_token,
                 "save_file_dir": args.save_model_name,
@@ -239,6 +260,8 @@ def sft_red_teaming_evaluation(
         eval.evaluate_model(model, tokenizer, accelerator, eval_args)
 
     accelerator.print("Evaluation complete.")
+
+    # Save the fine-tuned model
     accelerator.unwrap_model(model).save_pretrained(
         output_dir,
         is_main_process=accelerator.is_main_process,
@@ -247,50 +270,45 @@ def sft_red_teaming_evaluation(
     )
     accelerator.print(f"Model saved to {output_dir}.")
 
-
-MULTI_DIST_MAP = {
-    "pure_pile_bio_forget": "pile-bio",
-    "pure_pile_bio_retain": "pile-bio",
-    "pile_bio_retain_followed_by_pile_bio_forget": "pile-bio",
-    "cyber_and_pile_forget": "forget_train",
-    "cyber_and_pile_retain": "forget_train",
-    "cyber_retain_followed_by_forget": "forget_train",
-}
-
+# Configuration dictionaries for training strategies and optimizers
 TRAINING_CONFIG = {
     # Biosecurity
     "pure_pile_bio_forget": {
         "loop_type": single_dataloader_accel_finetune_loop,
         "dataloader_type": get_red_team_tar_bio_dataloaders,
         "finetuning_data_type": "forget",
+        "multi_dist_key_name": "pile-bio",
     },
     "pure_pile_bio_retain": {
         "loop_type": single_dataloader_accel_finetune_loop,
         "dataloader_type": get_red_team_tar_bio_dataloaders,
         "finetuning_data_type": "retain",
+        "multi_dist_key_name": "pile-bio",
     },
     "pile_bio_retain_followed_by_pile_bio_forget": {
         "loop_type": double_dataloader_accel_finetune_loop,
         "dataloader_type": get_red_team_tar_bio_dataloaders,
         "finetuning_data_type": "retain",
+        "multi_dist_key_name": "pile-bio",
     },
-    # NOTE: The Biosecurity OOD-Forget Dataset can be requested at https://docs.google.com/forms/d/e/1FAIpQLSdnQc8Qn0ozSDu3VE8HLoHPvhpukX1t1dIwE5K5rJw9lnOjKw/viewform
-    # NOTE: The Chemical Security dataset is private.
     # Cybersecurity
     "cyber_and_pile_forget": {
         "loop_type": single_dataloader_accel_finetune_loop,
         "dataloader_type": get_red_team_tar_cyber_dataloaders,
         "finetuning_data_type": "forget",
+        "multi_dist_key_name": "forget_train",
     },
     "cyber_and_pile_retain": {
         "loop_type": single_dataloader_accel_finetune_loop,
         "dataloader_type": get_red_team_tar_cyber_dataloaders,
         "finetuning_data_type": "retain",
+        "multi_dist_key_name": "forget_train",
     },
     "cyber_retain_followed_by_forget": {
         "loop_type": double_dataloader_accel_finetune_loop,
         "dataloader_type": get_red_team_tar_cyber_dataloaders,
         "finetuning_data_type": "retain",
+        "multi_dist_key_name": "forget_train",
     },
 }
 
@@ -304,17 +322,19 @@ OPTIMIZER_CONFIG = {
     "adamW_schedule_free": get_adamW_schedule_free,
 }
 
-
 def main():
+    """
+    Main function to parse command-line arguments and run the SFT red teaming evaluation.
+    """
     torch.cuda.empty_cache()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model_name", "-mn", type=str, default="meta-llama/Meta-Llama-3-8B-Instruct"
     )
-    parser.add_argument("--save_model_name", "-smn", type=str, default="saved_model")
     parser.add_argument(
         "--model_type", "-mt", type=str, default="meta-llama/Meta-Llama-3-8B-Instruct"
     )
+    parser.add_argument("--save_model_name", "-smn", type=str, default="saved_model")
     parser.add_argument("--scheduler_type", "-st", type=str, default="none")
     parser.add_argument("--num_warmup_steps", "-nws", type=int, default=0)
     parser.add_argument("--batch_size", "-bs", type=int, default=8)
@@ -332,32 +352,12 @@ def main():
         "-bsm",
         type=callable,
         default=return_step_based_batch_selection,
-    )  # NOTE: For double_dataloader_accel_finetune_loop
+    ) 
     parser.add_argument("--r->f_prop_steps_of_retain", "-psor", type=float, default=0.4)
 
     parser.add_argument("--peft", "-pft", action="store_true")
     parser.add_argument("--wandb", "-wb", action="store_true")
     parser.add_argument(
         "--evaluate_mmlu", "-mmlu", action="store_true"
-    )  # Evaluates the model when the relearning evaluation concludes and does not save the model.
-    parser.add_argument("--seed", "-s", type=int, default=42)
-    args = parser.parse_args()
-
-    fix_seed(args.seed)
-
-    sft_red_teaming_evaluation(
-        model_name=args.model_name,
-        model_type=args.model_type,
-        output_dir=os.path.join(SAVE_MODELS_DIR, args.save_model_name),
-        loop_type=TRAINING_CONFIG[args.training_strategy]["loop_type"],
-        dataloader_type=TRAINING_CONFIG[args.training_strategy]["dataloader_type"],
-        finetuning_data_type=TRAINING_CONFIG[args.training_strategy][
-            "finetuning_data_type"
-        ],
-        optimizer_type=OPTIMIZER_CONFIG[args.optimizer_type],
-        args=args,
     )
-
-
-if __name__ == "__main__":
-    main()
+    parser.add_argument("--seed", "-s", type=int, default=42)

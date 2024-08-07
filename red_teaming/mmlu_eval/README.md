@@ -25,7 +25,7 @@ This tool is designed to evaluate language models on the Massive Multitask Langu
 
 ## Usage
 
-Example of running the evaluation:
+To run the script, use the following command structure:
 
 ```bash
 accelerate launch --config_file $FxACCEL_CONFIG eval.py --model_name {YOUR MODEL} --model_type {TOKENIZER FOR YOUR MODEL}
