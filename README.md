@@ -30,9 +30,8 @@ Tamper-Resistant Safeguards are security measures designed for open-weight large
 
 ## 🌐 Overview 🌐
 
-This repository contains implementations for TAR (including the Random Mapping initial safeguard), red-teaming evaluation, and baseline methods. The current implementation assumes that models come from 🤗 Transformers, meaning they have the expected configs, subclasses, etc. However, the FSDP wrapping can be made compatible with any model. We plan to update the code to be more agnostic when we migrate to FSDP v2.
+This repository contains implementations for TAR (including the Random Mapping initial safeguard), the red-teaming evaluation used in the paper, and baseline methods.
 
-This repository also provides a scalable first-order meta-learning implementation, leveraging FSDP for training.
 
 ## ☕ Quick Start ☕
 
@@ -78,8 +77,9 @@ The `modules` folder contains the following files:
 
 ### 🛠️ Running Tamper-Resistance Training
 
-We provide scripts in the root-level folder for running TAR for biosecurity and cybersecurity: `run_tar_bio.sh` and `run_tar_cyber.sh`.
+The current implementation assumes that models come from 🤗 Transformers, meaning they have the expected configs, subclasses, etc. However, the FSDP wrapping can be made compatible with any model. We plan to update the code to be more agnostic when we migrate to FSDP v2. (This repository also serves as a scalable first-order meta-learning implementation)
 
+We provide scripts in the root-level folder for running TAR for biosecurity and cybersecurity: `run_tar_bio.sh` and `run_tar_cyber.sh`.
 
 It's recommended to run Llama-3-8B-Instruct models (or similar size) on systems with `8xA100 80G` or more VRAM due to full-parameter training and other overheads introduced by the first-order meta-learning implementation. 
 
