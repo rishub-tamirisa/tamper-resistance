@@ -1,5 +1,6 @@
 # 🛡️ Tamper-Resistant Safeguards for Open-Weight LLMs 🤖
 
+by ![Rishub Tamirisa](https://rishub-tamirisa.github.io/research/), ![Bhrugu Bharathi](https://www.linkedin.com/in/bhrugu-bharathi/), ![Long Phan](https://longphan.ai/), ![Andy Zhou](https://www.andyzhou.ai/), ![Alice Gatti](https://www.linkedin.com/in/gattialice/), ![Tarun Suresh](https://www.linkedin.com/in/tarsur909/), ![Maxwell Lin](https://www.linkedin.com/in/maxwell-l-05402819b/), ![Justin Wang](https://www.justinwang.xyz/), ![Rowan Wang](https://rowankwang.com/), ![Ron Arel](https://arel.ai/), ![Andy Zou](https://andyzoujm.github.io/), ![Dawn Song](https://dawnsong.io/), ![Bo Li](https://aisecure.github.io/), ![Dan Hendrycks](https://hendrycks.github.io/), and ![Mantas Mazeika](https://www.linkedin.com/in/mmazeika/)
 ![Tamper-Resistant Safeguards](assets/tamper-resistant.png)
 
 
