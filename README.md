@@ -72,8 +72,8 @@ The `modules` folder contains the following files:
 - `fsdp_v1_utils.py`: Utilities for FSDP v1
 - `training.py`: All training loop implementations, including TAR
 - `utils.py`: Helper functions
- 
 
+The `red_teaming` folder contains implementations for running all fine-tuning attacks discussed in the paper, as well as an FSDP-supported MMLU evaluation script.
 
 ### 🛠️ Running Tamper-Resistance Training
 
@@ -94,6 +94,8 @@ sh run_tar_bio.sh
 ### ➕ Running the Red-teaming evaluation
 
 In the `red_teaming` folder, `red_teaming_evaluation.py` serves as the entrypoint for running the red-teaming evaluations from the paper. Most methods use full-parameter training, so scripts should be launched with `accelerate` similar to the setup in the `run_tar_bio.sh` and `run_tar_cyber.sh` scripts.
+
+Check out the `README` documentation in the `red_teaming` folder for full details, as well as the documentation in `red_teaming/mmlu_eval` for specific details on running the full evaluation. 
 
 ## 🤗 Models and Datasets
 
