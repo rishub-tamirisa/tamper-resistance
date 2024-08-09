@@ -951,7 +951,6 @@ def tar_training_loop(
             dynamic_ncols=True,
         )
 
-    accelerator.print("Beginning MLAC")
     model_storage = FSDPModelStorage()
     adversary_lr_samples = [float(lr) for lr in adversary_lr_samples.split(",")]
 
