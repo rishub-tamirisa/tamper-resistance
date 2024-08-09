@@ -1,4 +1,12 @@
 # Official Repository for "Tamper-Resistant Safeguards for Open-Weight LLMs"
+<p>
+    <a href="https://www.python.org/">
+        <img alt="Build" src="https://img.shields.io/badge/Python-3.7+-1f425f.svg?color=purple">
+    </a>
+    <a href="https://copyright.illinois.edu/">
+        <img alt="License" src="https://img.shields.io/badge/License-MIT-blue">
+    </a>
+</p>
 
 by [Rishub Tamirisa](https://rishub-tamirisa.github.io/research/)<sup>\*</sup>, [Bhrugu Bharathi](https://www.linkedin.com/in/bhrugu-bharathi/)<sup>\*</sup>, [Long Phan](https://longphan.ai/), [Andy Zhou](https://www.andyzhou.ai/), [Alice Gatti](https://www.linkedin.com/in/gattialice/), [Tarun Suresh](https://www.linkedin.com/in/tarsur909/), [Maxwell Lin](https://www.linkedin.com/in/maxwell-l-05402819b/), [Justin Wang](https://www.justinwang.xyz/), [Rowan Wang](https://rowankwang.com/), [Ron Arel](https://arel.ai/), [Andy Zou](https://andyzoujm.github.io/), [Dawn Song](https://dawnsong.io/), [Bo Li](https://aisecure.github.io/), [Dan Hendrycks](https://hendrycks.github.io/), and [Mantas Mazeika](https://www.linkedin.com/in/mmazeika/)
 
