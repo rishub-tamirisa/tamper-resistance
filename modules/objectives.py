@@ -368,6 +368,107 @@ def obj_model_mse_representations(
     )
 
 
+def distribution_matching_obj(
+    model: torch.nn.Module = None,
+    x_r: Dict[str, torch.Tensor] = None,
+    x_r_match: Dict[str, torch.Tensor] = None,
+    x_f: Dict[str, torch.Tensor] = None,
+    accelerator: Accelerator = None,
+    gradient_accumulation_steps: int = None,
+) -> int:
+    """
+    Summary: Compute distribution matching loss, which minimizes Wasserstein distance between a subset of the retain set to match the forget set, but maximizes next-token likelihood for the whole retain set
+
+    Args:
+        model (torch.nn.Module): The model to be used for the computation
+        x_r (Dict[str, torch.Tensor]): The retain data
+        x_r_match (Dict[str, torch.Tensor]): The subset of the retain data for forget to match
+        x_f (Dict[str, torch.Tensor]): The forget data
+        accelerator (Accelerator): The accelerator to be used for the computation
+        gradient_accumulation_steps (int): The number of gradient accumulation steps
+        should_compute_retain_match_lm_loss (bool): Whether to compute LM loss for the subset of retain data
+
+    Returns:
+        int: The distribution matching loss (not differentiable, only for logging purposes)
+    """
+    _x_r = _filter_inputs(x_r)
+    _x_r_match = _filter_inputs(x_r_match)
+    _x_f = _filter_inputs(x_f)
+
+    # (1) Compute LM loss for retain data if provided
+    x_r_lm_loss = 0
+    if x_r is not None:
+        x_r_lm_loss = (
+            log_p_loss(model(**_x_r).logits, x_r.get("labels"), model.vocab_size)
+            / gradient_accumulation_steps
+        )
+        accelerator.backward(x_r_lm_loss)
+
+    # (2) Compute critic loss for retain subset data
+    r_critic_outputs_match = model(**_x_r_match)
+    s_x_r_match = (
+        torch.mean(
+            torch.stack(
+                [output.mean() for output in r_critic_outputs_match.probe_outputs]
+            )
+        )
+        / gradient_accumulation_steps
+    )
+
+    accelerator.backward(s_x_r_match)
+
+    # (4) Compute critic loss for forget data
+    f_critic_outputs = model(**_x_f).probe_outputs  # critic outputs for forget data
+    s_x_f = (
+        torch.mean(torch.stack([output.mean() for output in f_critic_outputs]))
+        * -1
+        / gradient_accumulation_steps
+    )
+    accelerator.backward(s_x_f)
+    return s_x_f.item() + s_x_r_match.item() + x_r_lm_loss.item()
+
+def critic_obj(
+    model: torch.nn.Module = None,
+    x_r: Dict[str, torch.Tensor] = None,
+    x_f: Dict[str, torch.Tensor] = None,
+    accelerator: Accelerator = None,
+    gradient_accumulation_steps: int = None,
+) -> int:
+    """
+    Summary: Compute critic loss, which approximates negative Wasserstein distance between retain and forget st
+
+    Args:
+        model (torch.nn.Module): The model to be used for the computation
+        x_r (Dict[str, torch.Tensor]): The retain data
+        x_f (Dict[str, torch.Tensor]): The forget data
+        accelerator (Accelerator): The accelerator to be used for the computation
+        gradient_accumulation_steps (int): The number of gradient accumulation steps
+
+    Returns:
+        int: The critic loss (not differentiable, only for logging purposes)
+    """
+
+    _x_r = _filter_inputs(x_r)
+    _x_f = _filter_inputs(x_f)
+
+    # (1) Compute critic loss for retain data
+    r_critic_outputs = model(**_x_r).probe_outputs
+    s_x_r = (
+        torch.mean(torch.stack([output.mean() for output in r_critic_outputs]))
+        * -1
+        / gradient_accumulation_steps
+    )
+    accelerator.backward(s_x_r)
+
+    # (2) Compute critic loss for forget data
+    f_critic_outputs = model(**_x_f).probe_outputs
+    s_x_f = (
+        torch.mean(torch.stack([output.mean() for output in f_critic_outputs]))
+        / gradient_accumulation_steps
+    )
+    accelerator.backward(s_x_f)
+    return s_x_f.item() + s_x_r.item()
+
 ## DPO LOSS ##
 def pad_to_length(
     tensor: torch.Tensor, length: int, pad_value: Union[int, float], dim: int = -1
@@ -757,3 +858,5 @@ def dpo_loss_obj(
         if backprop:
             accelerator.backward(loss)
     return loss.item(), reward_accuracies.mean().item() / gradient_accumulation_steps
+
+

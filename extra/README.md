@@ -1,0 +1,3 @@
+## Extra research ideas
+
+We include our implementation of a distribution matching loss between residual streams of two data distributions in `extra/wasserstein_probes.py`. This is not part of the Tamper-Resistance paper, but was an interesting early research idea that we explored for robust knowledge removal. We're including the implementation here for interested researchers as it happens to also serve as an FSDP-scalable Wasserstein GAN training loop.
