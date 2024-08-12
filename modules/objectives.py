@@ -116,7 +116,7 @@ def max_entropy_loss(logits: torch.Tensor) -> torch.Tensor:
     Compute the negative mean entropy loss for the given logits.
 
     This function calculates the entropy of the softmax distribution of the input logits
-    and returns the negative mean entropy as a loss value. Maximizing this loss
+    and returns the negative mean entropy as a loss value. Minimizing this loss
     encourages the model to produce more uniform (higher entropy) probability distributions.
 
     Args:
