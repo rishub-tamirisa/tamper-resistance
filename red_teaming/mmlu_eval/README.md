@@ -6,7 +6,8 @@ This tool is designed to evaluate language models on the Massive Multitask Langu
 
 1. Install the requirements as described in the top-level README. 
 
-> **CAUTION: This next step is crucial, as you will not be able to run the evaluation without doing this!**
+> [!IMPORTANT]  
+> **This next step is crucial, as you will not be able to run the evaluation without doing this!**
 > 
 > Follow these steps:
 > 1. Navigate to the evaluation directory:
