@@ -24,6 +24,7 @@ from modules.dataloaders import (
     get_tar_cyber_dataloaders,
 )
 from modules.training import random_mapping_training_loop, tar_training_loop
+from modules.utils import fix_seed
 
 ALLOWED_MODULES = [
     LlamaDecoderLayer,
@@ -99,13 +100,6 @@ def finetune_no_trainer(
         save_function=accelerator.save,
         state_dict=accelerator.get_state_dict(model),
     )
-
-
-def fix_seed():
-    random.seed(42)
-    np.random.seed(42)
-    torch.manual_seed(42)
-    torch.cuda.manual_seed_all(42)
 
 
 # Map the subject to the dataloader
