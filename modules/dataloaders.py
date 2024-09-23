@@ -74,6 +74,17 @@ def get_bio_pilecamel_forget_with_heldout_dataloaders(tokenizer, accelerator, ar
     ) = get_camel_ai_datasets(tokenizer)
     magpie_train, _ = get_magpie_datasets(tokenizer, cutoff_len=256)
 
+    (_, combined_bio_dataset, _, _) = get_combined_camel_ai_and_pile_bio_datasets(
+        tokenizer
+    )
+
+    combined_bio_dataloader = torch.utils.data.DataLoader(
+        combined_bio_dataset,
+        batch_size=args.batch_size,
+        collate_fn=data_collator,
+        shuffle=True,
+    )
+
     pure_retain_dataloader = torch.utils.data.DataLoader(
         tokenized_retain_dataset.remove_columns(["concept_label"]),
         batch_size=args.batch_size,
@@ -126,6 +137,7 @@ def get_bio_pilecamel_forget_with_heldout_dataloaders(tokenizer, accelerator, ar
         pile_forget_dataloader = accelerator.prepare(pile_forget_dataloader)
         camel_forget_dataloader = accelerator.prepare(camel_forget_dataloader)
         heldout_dataloader = accelerator.prepare(heldout_dataloader)
+        combined_bio_dataloader = accelerator.prepare(combined_bio_dataloader)
 
     return (
         pure_retain_dataloader,
@@ -133,6 +145,7 @@ def get_bio_pilecamel_forget_with_heldout_dataloaders(tokenizer, accelerator, ar
         pile_forget_dataloader,
         camel_forget_dataloader,
         heldout_dataloader,
+        combined_bio_dataloader,
     )
 
 
@@ -165,6 +178,28 @@ def get_camel_ai_datasets(
     return split["train"], split["test"], data_collator
 
 
+def get_combined_camel_ai_and_pile_bio_datasets(
+    tokenizer,
+):
+    (
+        pilebio_tokenized_retain_dataset,
+        pilebio_tokenized_forget_dataset,
+        _,
+        _,
+    ) = get_pile_bio_retain_forget_heldout_datasets(tokenizer)
+    camel_tokenized_forget_dataset, _, data_collator = get_camel_ai_datasets(tokenizer)
+    full_forget = concatenate_datasets(
+        [pilebio_tokenized_forget_dataset, camel_tokenized_forget_dataset]
+    )
+    split = full_forget.train_test_split(test_size=0.20, seed=42)
+    return (
+        pilebio_tokenized_retain_dataset,
+        split["train"],
+        split["test"],
+        data_collator,
+    )
+
+
 def get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
     (
         pure_retain_dataloader,
@@ -172,6 +207,7 @@ def get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
         pile_bio_dataloader,
         camel_bio_dataloader,
         bio_heldout_dataloader,
+        bio_combined_dataloder,
     ) = get_bio_pilecamel_forget_with_heldout_dataloaders(tokenizer, accelerator, args)
 
     dataloaders = {
@@ -181,6 +217,7 @@ def get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
         "forget_train": pile_bio_dataloader,
         "adv_retain": pure_retain_dataloader,
         "meta": bio_heldout_dataloader,
+        "bio-combined": bio_combined_dataloder,
     }
     return dataloaders
 

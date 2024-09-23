@@ -42,6 +42,7 @@ from transformers.models.gemma2.modeling_gemma2 import (
 )
 
 import red_teaming.mmlu_eval.eval as eval
+from utils import fix_seed
 
 import functools
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
@@ -71,14 +72,6 @@ auto_wrap_policy = functools.partial(lambda_auto_wrap_policy, lambda_fn=lambda_f
 FSDP_PLUGIN = FullyShardedDataParallelPlugin(
     auto_wrap_policy=auto_wrap_policy,
 )
-
-
-def fix_seed():
-    random.seed(42)
-    np.random.seed(42)
-    torch.manual_seed(42)
-    torch.cuda.manual_seed_all(42)
-
 
 def baseline(
     model_name: str,
