@@ -590,7 +590,7 @@ def get_anthropic_hh_dpo_dataset(tokenizer, dataset_size=1000):
 
 
 def get_magpie_datasets(tokenizer, cutoff_len: int = 512):
-    dataset = load_dataset("Magpie-Align/Magpie-Pro-MT-300K-v0.1")["train"]
+    dataset = load_dataset("lapisrocks/magpie-bio-filtered")["train"]
 
     def tokenize(sample, cutoff_len=cutoff_len):
         MAPPING = {"human": "user", "gpt": "assistant"}
