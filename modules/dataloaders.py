@@ -224,7 +224,7 @@ def get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
 
 def get_red_team_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs):
     dataloaders = get_tar_bio_dataloaders(tokenizer, accelerator, args, **kwargs)
-    return dataloaders["forget_train"], dataloaders["retain"]
+    return dataloaders["forget_train"], dataloaders["adv_retain"]
 
 
 def load_cyber_dataset():
