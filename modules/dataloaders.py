@@ -315,7 +315,7 @@ def get_tar_cyber_dataloaders(tokenizer, accelerator, args, **kwargs):
 
 def get_red_team_tar_cyber_dataloaders(tokenizer, accelerator, args, **kwargs):
     dataloaders = get_tar_cyber_dataloaders(tokenizer, accelerator, args, **kwargs)
-    return dataloaders["forget_train"], dataloaders["retain"]
+    return dataloaders["forget_train"], dataloaders["adv_retain"]
 
 
 def parse_conversation(conversation_string):
