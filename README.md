@@ -27,10 +27,10 @@ We introduce a novel method, Tampering Attack Resistance (TAR), which is the fir
 - [🤗 Models and Datasets](#-models-and-datasets)
 - [🙏 Citation 🙏](#citation)
 
-## 📰 Latest News 📰
-
-* ***[2024/08/07] 🚀 TAR 1.0: 🤗 Huggingface models, red-teaming evaluation + baselines code, and other improvements*** 🚀
-* ***[2024/08/01] 🚀 [Initial release of TAR](https://github.com/rishub-tamirisa/tamper-resistance)*** 🚀
+## 📰 Updates 📰
+* ***[2024/10/14] TAR-Bio-v2**: We identified a data contamination issue in our instruction-following retain dataset; we've resolved the issue and trained a new [🤗 
+Llama-3-8B-Instruct-TAR-Bio-v2](https://huggingface.co/lapisrocks/Llama-3-8B-Instruct-TAR-Bio-v2). Please use this model for evaluations, thanks!*** 
+* ***[2024/08/07] TAR Release**: 🤗 Huggingface models, red-teaming evaluation + baselines code, and other improvements*** 
 
 ## 🛡️ What are Tamper-Resistant Safeguards? 🛡️
 
