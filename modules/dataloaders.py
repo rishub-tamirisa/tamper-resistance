@@ -592,6 +592,7 @@ def get_anthropic_hh_dpo_dataset(tokenizer, dataset_size=1000):
 def get_magpie_datasets(tokenizer, cutoff_len: int = 512):
     dataset = load_dataset("lapisrocks/magpie-bio-filtered")["train"]
 
+     _special_tokens = list(tokenizer.added_tokens_decoder.keys())
     def tokenize(sample, cutoff_len=cutoff_len):
         MAPPING = {"human": "user", "gpt": "assistant"}
         chat = []
@@ -609,9 +610,11 @@ def get_magpie_datasets(tokenizer, cutoff_len: int = 512):
             max_length=cutoff_len,
             padding="max_length",
             return_tensors="pt",
+            add_special_tokens=False,
         )
         result["input_ids"] = result["input_ids"].squeeze()
         result["labels"] = result["input_ids"].clone()
+        result["labels"] = torch.where(torch.isin(result["input_ids"], torch.tensor(_special_tokens)), -100, result["labels"])
         result["attention_mask"] = result["attention_mask"].squeeze()
         return result
 
