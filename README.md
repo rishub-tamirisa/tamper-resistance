@@ -16,7 +16,7 @@ We introduce a novel method, Tampering Attack Resistance (TAR), which is the fir
 
 ## Table of Contents
 
-- [📰 Latest News 📰](#-latest-news-)
+- [📰 Updates 📰](#-updates-)
 - [🛡️ What are Tamper-Resistant Safeguards? 🛡️](#️-what-are-tamper-resistant-safeguards-️)
 - [🌐 Overview 🌐](#-overview-)
 - [☕ Quick Start ☕](#-quick-start-)
