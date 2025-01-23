@@ -1,4 +1,4 @@
-# Official Repository for "Tamper-Resistant Safeguards for Open-Weight LLMs"
+# [ICLR 2025] Official Repository for "Tamper-Resistant Safeguards for Open-Weight LLMs"
 <p>
     <a href="https://www.python.org/">
         <img alt="Build" src="https://img.shields.io/badge/Python-3.7+-1f425f.svg?color=purple">
